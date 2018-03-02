@@ -1,0 +1,19 @@
+diff --git a/lib/notify.h b/lib/notify.h
+index 88f167bf..1bdddb73 100644
+--- a/lib/notify.h
++++ b/lib/notify.h
+@@ -227,8 +230,12 @@ report_child_status(int status, pid_t pid, char const *prog_name)
+ 		exit_status = WEXITSTATUS(status);
+ 
+ 		/* Handle exit codes of vrrp or checker child */
+-		if (exit_status == KEEPALIVED_EXIT_FATAL ||
+-		    exit_status == KEEPALIVED_EXIT_CONFIG) {
++		if (
++#ifndef _DEBUG_
++		    prog_type == PROG_TYPE_PARENT &&
++#endif
++		    (exit_status == KEEPALIVED_EXIT_FATAL ||
++		     exit_status == KEEPALIVED_EXIT_CONFIG)) {
+ 			log_message(LOG_INFO, "%s exited with permanent error %s. Terminating", prog_id, exit_status == KEEPALIVED_EXIT_CONFIG ? "CONFIG" : "FATAL" );
+ 			return true;
+ 		}

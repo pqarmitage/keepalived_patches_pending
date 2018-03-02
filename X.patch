@@ -1,0 +1,56 @@
+diff --git a/doc/KEEPALIVED-MIB.txt b/doc/KEEPALIVED-MIB.txt
+index 68c84a1c..54baf5c9 100644
+--- a/doc/KEEPALIVED-MIB.txt
++++ b/doc/KEEPALIVED-MIB.txt
+@@ -22,12 +22,14 @@ IMPORTS
+         FROM SNMPv2-TC;
+ 
+ keepalived MODULE-IDENTITY
+-     LAST-UPDATED "201801100000Z"
++     LAST-UPDATED "201801110000Z"
+      ORGANIZATION "Keepalived"
+      CONTACT-INFO "http://www.keepalived.org"
+      DESCRIPTION
+         "This MIB describes objects used by keepalived, both
+          for VRRP and health checker."
++     REVISION "201801110000Z"
++     DESCRIPTION "extend traps to send shutdown on keepalived termination"
+      REVISION "201801100000Z"
+      DESCRIPTION "add sync group notify_stop script"
+      REVISION "201801080001Z"
+@@ -118,11 +120,12 @@ VrrpState ::= TEXTUAL-CONVENTION
+     DESCRIPTION
+     "Represents a VRRP state."
+     SYNTAX INTEGER {
+-        init(0),
+-    backup(1),
+-    master(2),
+-    fault(3),
+-    unknown(4)
++	init(0),
++	backup(1),
++	master(2),
++	fault(3),
++	unknown(4),
++	shutdown(5)
+     }
+ 
+ RouteType ::= TEXTUAL-CONVENTION
+@@ -2778,7 +2781,7 @@ virtualServerLoadBalancingKind OBJECT-TYPE
+     ::= { virtualServerEntry 10 }
+ 
+ virtualServerStatus OBJECT-TYPE
+-    SYNTAX INTEGER { alive(1), dead(2) }
++    SYNTAX INTEGER { alive(1), dead(2), shutdown(3) }
+     MAX-ACCESS read-only
+     STATUS current
+     DESCRIPTION
+@@ -3334,7 +3337,7 @@ realServerPort OBJECT-TYPE
+     ::= { realServerEntry 5 }
+ 
+ realServerStatus OBJECT-TYPE
+-    SYNTAX INTEGER { alive(1), dead(2) }
++    SYNTAX INTEGER { alive(1), dead(2), shutdown(3) }
+     MAX-ACCESS read-only
+     STATUS current
+     DESCRIPTION
