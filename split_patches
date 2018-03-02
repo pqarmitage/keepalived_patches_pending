@@ -1,0 +1,9 @@
+#!/bin/bash
+
+PATCH_FILE=${1:-/tmp/diff.patch}
+
+[[ ! -f $PATCH_FILE ]] && echo Cannot find $PATCH_FILE && exit 1
+
+for l in $(sed -e "s/\(^[A-Z]*\).*/\1/" -e "s/\([^@]\)/\1@/g" <$PATCH_FILE | tr "@" "\n" | sort -u); do
+	grep "^[A-Z]*$l" <$PATCH_FILE | sed -e "s/^[A-Z]*//" >../patches/$l.patch
+done
