@@ -1,0 +1,12 @@
+diff --git a/keepalived/core/keepalived_netlink.c b/keepalived/core/keepalived_netlink.c
+index ad0befb4..f9c29785 100644
+--- a/keepalived/core/keepalived_netlink.c
++++ b/keepalived/core/keepalived_netlink.c
+@@ -811,6 +811,7 @@ netlink_request(nl_handle_t *nl, unsigned char family, uint16_t type)
+ 
+ 	/* Cleanup the room */
+ 	memset(&snl, 0, sizeof (snl));
++	memset(&req, 0, sizeof (req));
+ 	snl.nl_family = AF_NETLINK;
+ 
+ 	req.nlh.nlmsg_len = sizeof (req);
