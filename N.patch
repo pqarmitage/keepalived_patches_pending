@@ -1,8 +1,8 @@
 diff --git a/keepalived/check/check_daemon.c b/keepalived/check/check_daemon.c
-index faacce55..c8d8ebed 100644
+index faacce55..ecc1a590 100644
 --- a/keepalived/check/check_daemon.c
 +++ b/keepalived/check/check_daemon.c
-@@ -52,12 +52,14 @@
+@@ -52,42 +52,36 @@
  #include "bfd_daemon.h"
  #include "check_bfd.h"
  #endif
@@ -17,7 +17,9 @@ index faacce55..c8d8ebed 100644
  
  static int
  lvs_notify_fifo_script_exit(__attribute__((unused)) thread_t *thread)
-@@ -67,27 +69,19 @@ lvs_notify_fifo_script_exit(__attribute__((unused)) thread_t *thread)
+ {
+ 	log_message(LOG_INFO, "lvs notify fifo script terminated");
+ 
  	return 0;
  }
  
@@ -49,7 +51,7 @@ index faacce55..c8d8ebed 100644
  	ipvs_stop();
  #ifdef _WITH_SNMP_CHECKER_
  	if (global_data && global_data->enable_snmp_checker)
-@@ -125,6 +119,47 @@ stop_check(int status)
+@@ -125,6 +119,46 @@ stop_check(int status)
  #endif
  	close_std_fd();
  
@@ -59,7 +61,6 @@ index faacce55..c8d8ebed 100644
 +static void
 +terminate_phase1(void)
 +{
-+log_message(LOG_INFO, "*** LOG REMOVAL OF VSs");
 +	if (using_ha_suspend || __test_bit(LOG_ADDRESS_CHANGES, &debug))
 +		kernel_netlink_close();
 +
@@ -97,7 +98,7 @@ index faacce55..c8d8ebed 100644
  	exit(status);
  }
  
-@@ -223,7 +258,7 @@ reload_check_thread(__attribute__((unused)) thread_t * thread)
+@@ -223,10 +258,10 @@ reload_check_thread(__attribute__((unused)) thread_t * thread)
  	log_message(LOG_INFO, "Got SIGHUP, reloading checker configuration");
  
  	/* Terminate all script process */
@@ -106,6 +107,9 @@ index faacce55..c8d8ebed 100644
  
  	/* Remove the notify fifo - we don't know if it will be the same after a reload */
  	notify_fifo_close(&global_data->notify_fifo, &global_data->lvs_notify_fifo);
+ 
+ 	/* Destroy master thread */
+ #ifdef _WITH_BFD_
 @@ -270,7 +305,7 @@ static void
  sigend_check(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
  {
@@ -320,25 +324,6 @@ index 91af2a83..a2da8e0d 100644
  
  	if (vrrp_data->vrrp_track_files)
  		stop_track_files();
-diff --git a/keepalived/vrrp/vrrp_scheduler.c b/keepalived/vrrp/vrrp_scheduler.c
-index 792203b9..7712721f 100644
---- a/keepalived/vrrp/vrrp_scheduler.c
-+++ b/keepalived/vrrp/vrrp_scheduler.c
-@@ -975,8 +975,13 @@ vrrp_script_child_thread(thread_t * thread)
- 		if (timeout) {
- 			/* If kill returns an error, we can't kill the process since either the process has terminated,
- 			 * or we don't have permission. If we can't kill it, there is no point trying again. */
--			if (!kill(-pid, sig_num))
-+			if (!kill(-pid, sig_num)) {
-+				if (errno == ESRCH) {
-+					/* The child has gone */
-+					// Update THREAD_CHILD_STATUS and fall through to next bit
-+				}
- 				timeout = 1000;
-+			}
- 		} else if (vscript->state != SCRIPT_STATE_IDLE) {
- 			log_message(LOG_INFO, "Child thread pid %d timeout with unknown script state %d", pid, vscript->state);
- 			timeout = 10;	/* We need some timeout */
 diff --git a/lib/notify.c b/lib/notify.c
 index 9c371986..ab5398fd 100644
 --- a/lib/notify.c
@@ -408,7 +393,7 @@ index 88f167bf..1bdddb73 100644
  extern int check_notify_script_secure(notify_script_t **, magic_t);
  extern bool set_default_script_user(const char *, const char *);
 diff --git a/lib/scheduler.c b/lib/scheduler.c
-index 66102749..77c2378a 100644
+index 66102749..c9c9c527 100644
 --- a/lib/scheduler.c
 +++ b/lib/scheduler.c
 @@ -62,6 +62,9 @@ bool snmp_running;		/* True if this process is running SNMP */
@@ -421,7 +406,7 @@ index 66102749..77c2378a 100644
  #ifdef _WITH_LVS_
  #include "../keepalived/include/check_daemon.h"
  #endif
-@@ -631,6 +641,18 @@ thread_add_child(thread_master_t * m, int (*func) (thread_t *)
+@@ -631,6 +642,18 @@ thread_add_child(thread_master_t * m, int (*func) (thread_t *)
  	return thread;
  }
  
@@ -440,7 +425,7 @@ index 66102749..77c2378a 100644
  /* Add simple event thread. */
  thread_t *
  thread_add_event(thread_master_t * m, int (*func) (thread_t *)
-@@ -652,19 +674,19 @@ thread_add_event(thread_master_t * m, int (*func) (thread_t *)
+@@ -652,19 +675,19 @@ thread_add_event(thread_master_t * m, int (*func) (thread_t *)
  	return thread;
  }
  
@@ -465,7 +450,7 @@ index 66102749..77c2378a 100644
  	thread->arg = NULL;
  	thread->u.val = 0;
  	thread_list_add(&m->event, thread);
-@@ -672,6 +694,18 @@ thread_add_terminate_event(thread_master_t * m)
+@@ -672,6 +695,18 @@ thread_add_terminate_event(thread_master_t * m)
  	return thread;
  }
  
@@ -484,7 +469,7 @@ index 66102749..77c2378a 100644
  /* Cancel thread from scheduler. */
  int
  thread_cancel(thread_t * thread)
-@@ -838,14 +872,33 @@ retry:	/* When thread can't fetch try to find next thread again. */
+@@ -838,14 +873,33 @@ retry:	/* When thread can't fetch try to find next thread again. */
  
  		thread->type = THREAD_UNUSED;
  		thread_add_unuse(m, thread);
@@ -518,7 +503,7 @@ index 66102749..77c2378a 100644
  		return fetch;
  	}
  
-@@ -976,7 +1029,7 @@ retry:	/* When thread can't fetch try to find next thread again. */
+@@ -976,7 +1030,7 @@ retry:	/* When thread can't fetch try to find next thread again. */
  			timers_done = true;
  	}
  

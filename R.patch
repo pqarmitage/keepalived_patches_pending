@@ -44,7 +44,7 @@ index cde965b0..33414b37 100644
  #include "global_parser.h"
  #include "bfd.h"
 diff --git a/keepalived/check/check_daemon.c b/keepalived/check/check_daemon.c
-index faacce55..c8d8ebed 100644
+index faacce55..ecc1a590 100644
 --- a/keepalived/check/check_daemon.c
 +++ b/keepalived/check/check_daemon.c
 @@ -260,7 +295,7 @@ reload_check_thread(__attribute__((unused)) thread_t * thread)

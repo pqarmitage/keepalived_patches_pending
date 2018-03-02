@@ -14,7 +14,7 @@ index 9c371986..ab5398fd 100644
  
  	sigmask_func(0, NULL, &old_set);
  	if (!sigismember(&old_set, SIGCHLD)) {
-@@ -388,17 +409,18 @@ script_killall(thread_master_t *m, int signo)
+@@ -388,21 +409,24 @@ script_killall(thread_master_t *m, int signo)
  		sigaddset(&child_wait, SIGCHLD);
  		sigmask_func(SIG_BLOCK, &child_wait, NULL);
  	}
@@ -37,4 +37,10 @@ index 9c371986..ab5398fd 100644
 -		thread = thread->next;
  	}
  
++#ifndef HAVE_SIGNALFD
  	if (!sigismember(&old_set, SIGCHLD))
+ 		sigmask_func(SIG_UNBLOCK, &child_wait, NULL);
++#endif
+ }
+ 
+ static bool

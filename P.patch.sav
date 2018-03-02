@@ -1,7 +1,7 @@
-diff --git a/lib/notify.h b/lib/notify.h
-index 88f167bf..1bdddb73 100644
---- a/lib/notify.h
-+++ b/lib/notify.h
+diff --git a/lib/scheduler.c b/lib/scheduler.c
+index 66102749..c9c9c527 100644
+--- a/lib/scheduler.c
++++ b/lib/scheduler.c
 @@ -227,8 +230,12 @@ report_child_status(int status, pid_t pid, char const *prog_name)
  		exit_status = WEXITSTATUS(status);
  
