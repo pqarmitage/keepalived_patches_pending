@@ -1,0 +1,430 @@
+diff --git a/doc/man/man8/keepalived.8 b/doc/man/man8/keepalived.8
+index 91501463..90beff7d 100644
+--- a/doc/man/man8/keepalived.8
++++ b/doc/man/man8/keepalived.8
+@@ -28,7 +28,8 @@ keepalived \- load\-balancing and high\-availability service
+ [\fB\-A\fP|\fB\-\-snmp-agent-socket\fP=FILE]
+ [\fB\-m\fP|\fB\-\-core\-dump\fP]
+ [\fB\-M\fP|\fB\-\-core\-dump\-format\fP[=PATTERN]]
+-[\fB  \fP|\fB\-\-signum\fP=SIGFUNC\fP]
++[\fB  \fP\fB\-\-signum\fP=SIGFUNC]
++[\fB\-k\fP|\fB\-\-kill\fP[=PID]]
+ [\fB\-v\fP|\fB\-\-version\fP]
+ [\fB\-h\fP|\fB\-\-help\fP]
+ 
+@@ -140,6 +141,20 @@ For example, to stop keepalived running, execute:
+ kill -s $(keepalived --signum=STOP) $(cat /var/run/keepalived.pid)
+ .fi
+ .TP
++\fB -k[PID], --kill\fP[=PID]
++Request a keepalived process to terminate. If PID is specified, that
++PID will be sent SIGTERM, otherwise the PID file, as determined by
++the configuration, will be read and that PID used.
++If PID is not specified, keepalived should be invoked with the same
++command line options as the keepalived instance it is wanted to stop
++including the configuration file, (with the exception of adding --kill).
++The process requesting the termination will wait for up to 10 seconds
++for the terminating keepalived process to terminate, so the killing
++keepalived should exit after the keepalived process it is stopping has
++been stopped. This method of shutting keepalived down should be used
++in a systemd service file (see systemd.service(5) man page and the
++ExecStop= entry).
++.TP
+ \fB -v, --version\fP
+ Display the version and exit.
+ .TP
+diff --git a/keepalived/core/main.c b/keepalived/core/main.c
+index 5cd88c44..87168400 100644
+--- a/keepalived/core/main.c
++++ b/keepalived/core/main.c
+@@ -90,6 +90,7 @@ const char *snmp_socket;				/* Socket to use for SNMP agent */
+ static char *syslog_ident;				/* syslog ident if not default */
+ char *instance_name;					/* keepalived instance name */
+ bool use_pid_dir;					/* Put pid files in /var/run/keepalived or @localstatedir@/run/keepalived */
++pid_t kill_pid = 0;					/* Set non-zero if we are to kill a running keepalived */
+ 
+ unsigned os_major;					/* Kernel version */
+ unsigned os_minor;
+@@ -580,6 +581,8 @@ usage(const char *prog)
+ 	fprintf(stderr, "  -i, --config-id id           Skip any configuration lines beginning '@' that don't match id\n"
+ 		        "                                or any lines beginning @^ that do match.\n"
+ 		        "                                The config-id defaults to the node name if option not used\n");
++	fprintf(stderr, "  -k, --kill[=PID]             Stop keepalived running, it is read fron the relevant pid file\n"
++		        "                                as determined by the configuration\n");
+ 	fprintf(stderr, "      --signum=SIGFUNC         Return signal number for STOP, RELOAD, DATA, STATS"
+ #ifdef _WITH_JSON_
+ 								", JSON"
+@@ -641,14 +644,15 @@ parse_cmdline(int argc, char **argv)
+ 		{"namespace",		required_argument,	NULL, 's'},
+ #endif	
+ 		{"config-id",		required_argument,	NULL, 'i'},
+-		{"signum",		required_argument,	NULL,  1 },
++		{"kill",		optional_argument,	NULL, 'k'},
++		{"signum",		required_argument,	NULL,  3 },
+ 		{"version",		no_argument,		NULL, 'v'},
+ 		{"help",		no_argument,		NULL, 'h'},
+ 
+ 		{NULL,			0,			NULL,  0 }
+ 	};
+ 
+-	while ((c = getopt_long(argc, argv, "vhlndDRS:f:p:i:mMg:G"
++	while ((c = getopt_long(argc, argv, ":vhlndDRS:f:p:i:mM::g::Gk::"
+ #if defined _WITH_VRRP_ && defined _WITH_LVS_
+ 					    "PC"
+ #endif
+@@ -798,7 +802,7 @@ parse_cmdline(int argc, char **argv)
+ 			config_id = MALLOC(strlen(optarg) + 1);
+ 			strcpy(config_id, optarg);
+ 			break;
+-		case 1:			/* --signum */
++		case 3:			/* --signum */
+ 			signum = get_signum(optarg);
+ 			if (signum == -1) {
+ 				fprintf(stderr, "Unknown sigfunc %s\n", optarg);
+@@ -808,6 +812,20 @@ parse_cmdline(int argc, char **argv)
+ 			printf("%d\n", signum);
+ 			exit(0);
+ 			break;
++		case 'k':
++			if (optarg && optarg[0])
++				kill_pid = atoi(optarg);
++			else
++				kill_pid = -1;
++			break;
++		case '?':
++			log_message(LOG_INFO, "Unknown option -%c", optopt);
++			exit(0);
++			break;
++		case ':':
++			log_message(LOG_INFO, "Missing parameter for option -%c", optopt);
++			exit(0);
++			break;
+ 		default:
+ 			exit(0);
+ 			break;
+@@ -897,37 +915,43 @@ keepalived_main(int argc, char **argv)
+ 			openlog(PACKAGE_NAME, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0) , log_facility);
+ 	}
+ 
++	/* If we are terminating a running keepalived and we have the pid, kill it now */
++	if (kill_pid > 0)
++		exit(kill_keepalived(kill_pid));
++
+ 	if (__test_bit(LOG_CONSOLE_BIT, &debug))
+ 		enable_console_log();
+ 
++	if (!kill_pid)  {
+ #ifdef GIT_COMMIT
+-	log_message(LOG_INFO, "Starting %s, git commit %s", version_string, GIT_COMMIT);
++		log_message(LOG_INFO, "Starting %s, git commit %s", version_string, GIT_COMMIT);
+ #else
+-	log_message(LOG_INFO, "Starting %s", version_string);
+-#endif
+-
+-	/* Handle any core file requirements */
+-	core_dump_init();
+-
+-	if (os_major) {
+-		if (KERNEL_VERSION(os_major, os_minor, os_release) < LINUX_VERSION_CODE) {
+-			/* keepalived was build for a later kernel version */
+-			log_message(LOG_INFO, "WARNING - keepalived was build for newer Linux %d.%d.%d, running on %s %s %s",
+-					(LINUX_VERSION_CODE >> 16) & 0xff,
+-					(LINUX_VERSION_CODE >>  8) & 0xff,
+-					(LINUX_VERSION_CODE      ) & 0xff,
+-					uname_buf.sysname, uname_buf.release, uname_buf.version);
+-		} else {
+-			/* keepalived was build for a later kernel version */
+-			log_message(LOG_INFO, "Running on %s %s %s (built for Linux %d.%d.%d)",
+-					uname_buf.sysname, uname_buf.release, uname_buf.version,
+-					(LINUX_VERSION_CODE >> 16) & 0xff,
+-					(LINUX_VERSION_CODE >>  8) & 0xff,
+-					(LINUX_VERSION_CODE      ) & 0xff);
++		log_message(LOG_INFO, "Starting %s", version_string);
++#endif
++
++		/* Handle any core file requirements */
++		core_dump_init();
++
++		if (os_major) {
++			if (KERNEL_VERSION(os_major, os_minor, os_release) < LINUX_VERSION_CODE) {
++				/* keepalived was build for a later kernel version */
++				log_message(LOG_INFO, "WARNING - keepalived was build for newer Linux %d.%d.%d, running on %s %s %s",
++						(LINUX_VERSION_CODE >> 16) & 0xff,
++						(LINUX_VERSION_CODE >>  8) & 0xff,
++						(LINUX_VERSION_CODE      ) & 0xff,
++						uname_buf.sysname, uname_buf.release, uname_buf.version);
++			} else {
++				/* keepalived was build for a later kernel version */
++				log_message(LOG_INFO, "Running on %s %s %s (built for Linux %d.%d.%d)",
++						uname_buf.sysname, uname_buf.release, uname_buf.version,
++						(LINUX_VERSION_CODE >> 16) & 0xff,
++						(LINUX_VERSION_CODE >>  8) & 0xff,
++						(LINUX_VERSION_CODE      ) & 0xff);
++			}
+ 		}
+-	}
+ 
+-	netlink_set_recv_buf_size();
++		netlink_set_recv_buf_size();
++	}
+ 
+ 	/* Check we can read the configuration file(s).
+ 	   NOTE: the working directory will be / if we
+@@ -944,7 +968,8 @@ keepalived_main(int argc, char **argv)
+ #if HAVE_DECL_CLONE_NEWNET
+ 	if (override_namespace) {
+ 		if (network_namespace) {
+-			log_message(LOG_INFO, "Overriding config net_namespace '%s' with command line namespace '%s'", network_namespace, override_namespace);
++			if (!kill_pid)
++				log_message(LOG_INFO, "Overriding config net_namespace '%s' with command line namespace '%s'", network_namespace, override_namespace);
+ 			FREE(network_namespace);
+ 		}
+ 		network_namespace = override_namespace;
+@@ -957,28 +982,35 @@ keepalived_main(int argc, char **argv)
+ 			  || network_namespace
+ #endif
+ 					      ) {
+-		if ((syslog_ident = make_syslog_ident(PACKAGE_NAME))) {
+-			log_message(LOG_INFO, "Changing syslog ident to %s", syslog_ident);
+-			closelog();
+-			openlog(syslog_ident, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0), log_facility);
+-		}
+-		else
+-			log_message(LOG_INFO, "Unable to change syslog ident");
+-
+ 		use_pid_dir = true;
+ 
+-		open_log_file(log_file_name, NULL, network_namespace, instance_name);
++		if (!kill_pid) {
++			if ((syslog_ident = make_syslog_ident(PACKAGE_NAME))) {
++				log_message(LOG_INFO, "Changing syslog ident to %s", syslog_ident);
++				closelog();
++				openlog(syslog_ident, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0), log_facility);
++			}
++			else
++				log_message(LOG_INFO, "Unable to change syslog ident");
++
++			open_log_file(log_file_name, NULL, network_namespace, instance_name);
++		}
+ 	}
+ 
+-	if (use_pid_dir) {
+-		/* Create the directory for pid files */
+-		create_pid_dir();
++	if (!kill_pid) {
++		if (use_pid_dir) {
++			/* Create the directory for pid files */
++			create_pid_dir();
++		}
+ 	}
+ 
+ #if HAVE_DECL_CLONE_NEWNET
+ 	if (network_namespace) {
+-		if (network_namespace && !set_namespaces(network_namespace)) {
+-			log_message(LOG_ERR, "Unable to set network namespace %s - exiting", network_namespace);
++		if (network_namespace && !set_namespaces(network_namespace, !!kill_pid)) {
++			if (kill_pid)
++				log_message(LOG_ERR, "PID directory does not exist - exiting");
++			else
++				log_message(LOG_ERR, "Unable to set network namespace %s - exiting", network_namespace);
+ 			goto end;
+ 		}
+ 	}
+@@ -1023,6 +1055,9 @@ keepalived_main(int argc, char **argv)
+ #endif
+ 	}
+ 
++	if (kill_pid)
++		exit(kill_keepalived_read_pid(main_pidfile));
++
+ 	/* Check if keepalived is already running */
+ 	if (keepalived_running(daemon_mode)) {
+ 		log_message(LOG_INFO, "daemon is already running");
+diff --git a/keepalived/core/namespaces.c b/keepalived/core/namespaces.c
+index 03edc869..aa28ddc0 100644
+--- a/keepalived/core/namespaces.c
++++ b/keepalived/core/namespaces.c
+@@ -208,8 +208,10 @@ free_dirname(void)
+ }
+ 
+ static void
+-set_run_mount(const char *net_namespace)
++set_run_mount(const char *net_namespace, bool dont_create)
+ {
++	struct stat stat_buf;
++
+ 	/* /var/run/keepalived/NAMESPACE */
+ 	mount_dirname = MALLOC(strlen(PID_DIR PACKAGE "/") + 1 + strlen(net_namespace));
+ 	if (!mount_dirname) {
+@@ -220,7 +222,12 @@ set_run_mount(const char *net_namespace)
+ 	strcpy(mount_dirname, PID_DIR PACKAGE "/");
+ 	strcat(mount_dirname, net_namespace);
+ 
+-	if (mkdir(mount_dirname, S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH) && errno != EEXIST) {
++	if (dont_create) {
++		if (stat(mount_dirname, &stat_buf)) {
++			log_message(LOG_INFO, "PID directory does not exist");
++			exit(ENOENT);
++		}
++	} else if (mkdir(mount_dirname, S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH) && errno != EEXIST) {
+ 		log_message(LOG_INFO, "Unable to create directory %s", mount_dirname);
+ 		FREE(mount_dirname);
+ 		mount_dirname = NULL;
+@@ -255,7 +262,7 @@ unmount_run(void)
+ }
+ 
+ bool
+-set_namespaces(const char* net_namespace)
++set_namespaces(const char* net_namespace, bool dont_create)
+ {
+ 	char *netns_path;
+ 	int fd;
+@@ -282,7 +289,7 @@ set_namespaces(const char* net_namespace)
+ 
+ 	close(fd);
+ 
+-	set_run_mount(net_namespace);
++	set_run_mount(net_namespace, dont_create);
+ 
+ 	FREE_PTR(netns_path);
+ 	netns_path = NULL;
+diff --git a/keepalived/core/pidfile.c b/keepalived/core/pidfile.c
+index 38ec33cc..af0073f9 100644
+--- a/keepalived/core/pidfile.c
++++ b/keepalived/core/pidfile.c
+@@ -25,6 +25,8 @@
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <fcntl.h>
++#include <signal.h>
++#include <sys/wait.h>
+ #include "logger.h"
+ #include "pidfile.h"
+ #include "main.h"
+@@ -74,26 +76,39 @@ pidfile_rm(const char *pid_file)
+ 	unlink(pid_file);
+ }
+ 
+-/* return the daemon running state */
++/* Read the PID from the pid file */
+ static int
+-process_running(const char *pid_file)
++read_pid(const char *pid_file, pid_t *pid)
+ {
+ 	FILE *pidfile = fopen(pid_file, "r");
+-	pid_t pid = 0;
+ 	int ret;
+ 
+ 	/* No pidfile */
+ 	if (!pidfile)
+-		return 0;
++		return ENOENT;
+ 
+-	ret = fscanf(pidfile, "%d", &pid);
++	ret = fscanf(pidfile, "%d", pid);
+ 	fclose(pidfile);
+ 	if (ret != 1) {
+ 		log_message(LOG_INFO, "Error reading pid file %s", pid_file);
+-		pid = 0;
+-		pidfile_rm(pid_file);
++		*pid = 0;
++		return ENODATA;
+ 	}
+ 
++	return 0;
++}
++
++/* return the daemon running state */
++static int
++process_running(const char *pid_file)
++{
++	pid_t pid = 0;
++
++	if (read_pid(pid_file, &pid) == ENOENT)
++		return 0;
++
++	pidfile_rm(pid_file);
++
+ 	/* What should we return - we don't know if it is running or not. */
+ 	if (!pid)
+ 		return 1;
+@@ -101,7 +116,6 @@ process_running(const char *pid_file)
+ 	/* If no process is attached to pidfile, remove it */
+ 	if (kill(pid, 0)) {
+ 		log_message(LOG_INFO, "Remove a zombie pid file %s", pid_file);
+-		pidfile_rm(pid_file);
+ 		return 0;
+ 	}
+ 
+@@ -124,3 +138,46 @@ keepalived_running(unsigned long mode)
+ #endif
+ 	return false;
+ }
++
++int kill_keepalived(pid_t pid)
++{
++	int sav_errno;
++	int time_to_wait;
++
++	if (kill(pid, SIGTERM)) {
++		sav_errno = errno;
++		if (sav_errno == ESRCH)
++			log_message(LOG_INFO, "kill couldn't find process %d", pid);
++		else if (sav_errno == EPERM)
++			log_message(LOG_INFO, "insufficient priviledge to kill %d", pid);
++		else
++			log_message(LOG_INFO, "kill %d failed with errno %d", pid, sav_errno);
++
++		return sav_errno;
++	}
++
++	/* Allow ten seconds for keepalived to terminate */
++	time_to_wait = 10;
++	while (time_to_wait--) {
++		if (kill(pid, 0) == -1 && errno == ESRCH)
++			return 0;
++
++		sleep(1);
++	}
++
++	return ETIMEDOUT;
++}
++
++int kill_keepalived_read_pid(const char *pid_file)
++{
++	pid_t pid;
++	int ret;
++
++	if ((ret = read_pid(pid_file, &pid))) {
++		log_message(LOG_INFO, "kill requested failed to read pid file %s - %d", pid_file, ret);
++
++		return ret;
++	}
++
++	return kill_keepalived(pid);
++}
+diff --git a/keepalived/include/namespaces.h b/keepalived/include/namespaces.h
+index 09baf8ee..3aabbe34 100644
+--- a/keepalived/include/namespaces.h
++++ b/keepalived/include/namespaces.h
+@@ -26,7 +26,7 @@
+ #include <stdbool.h>
+ 
+ extern void free_dirname(void);
+-extern bool set_namespaces(const char*);
++extern bool set_namespaces(const char*, bool);
+ extern void clear_namespaces(void);
+ 
+ #endif
+diff --git a/keepalived/include/pidfile.h b/keepalived/include/pidfile.h
+index cfa97695..12613595 100644
+--- a/keepalived/include/pidfile.h
++++ b/keepalived/include/pidfile.h
+@@ -52,5 +52,7 @@ extern void remove_pid_dir(void);
+ extern int pidfile_write(const char *, int);
+ extern void pidfile_rm(const char *);
+ extern bool keepalived_running(unsigned long);
++extern int kill_keepalived(pid_t);
++extern int kill_keepalived_read_pid(const char *);
+ 
+ #endif
