@@ -2,12 +2,10 @@ diff --git a/doc/man/man8/keepalived.8 b/doc/man/man8/keepalived.8
 index 91501463..90beff7d 100644
 --- a/doc/man/man8/keepalived.8
 +++ b/doc/man/man8/keepalived.8
-@@ -28,7 +28,8 @@ keepalived \- load\-balancing and high\-availability service
- [\fB\-A\fP|\fB\-\-snmp-agent-socket\fP=FILE]
+@@ -29,6 +29,7 @@ keepalived \- load\-balancing and high\-availability service
  [\fB\-m\fP|\fB\-\-core\-dump\fP]
  [\fB\-M\fP|\fB\-\-core\-dump\-format\fP[=PATTERN]]
--[\fB  \fP|\fB\-\-signum\fP=SIGFUNC\fP]
-+[\fB  \fP\fB\-\-signum\fP=SIGFUNC]
+ [\fB\-\-signum\fP=SIGFUNC]
 +[\fB\-k\fP|\fB\-\-kill\fP[=PID]]
  [\fB\-v\fP|\fB\-\-version\fP]
  [\fB\-h\fP|\fB\-\-help\fP]
@@ -60,7 +58,7 @@ index 5cd88c44..87168400 100644
  		{"config-id",		required_argument,	NULL, 'i'},
 -		{"signum",		required_argument,	NULL,  1 },
 +		{"kill",		optional_argument,	NULL, 'k'},
-+		{"signum",		required_argument,	NULL,  3 },
+ 		{"signum",		required_argument,	NULL,  4 },
  		{"version",		no_argument,		NULL, 'v'},
  		{"help",		no_argument,		NULL, 'h'},
  
@@ -72,16 +70,7 @@ index 5cd88c44..87168400 100644
  #if defined _WITH_VRRP_ && defined _WITH_LVS_
  					    "PC"
  #endif
-@@ -798,7 +802,7 @@ parse_cmdline(int argc, char **argv)
- 			config_id = MALLOC(strlen(optarg) + 1);
- 			strcpy(config_id, optarg);
- 			break;
--		case 1:			/* --signum */
-+		case 3:			/* --signum */
- 			signum = get_signum(optarg);
- 			if (signum == -1) {
- 				fprintf(stderr, "Unknown sigfunc %s\n", optarg);
-@@ -808,6 +812,20 @@ parse_cmdline(int argc, char **argv)
+@@ -808,6 +812,12 @@ parse_cmdline(int argc, char **argv)
  			printf("%d\n", signum);
  			exit(0);
  			break;
@@ -91,17 +80,9 @@ index 5cd88c44..87168400 100644
 +			else
 +				kill_pid = -1;
 +			break;
-+		case '?':
-+			log_message(LOG_INFO, "Unknown option -%c", optopt);
-+			exit(0);
-+			break;
-+		case ':':
-+			log_message(LOG_INFO, "Missing parameter for option -%c", optopt);
-+			exit(0);
-+			break;
- 		default:
- 			exit(0);
- 			break;
+ 		case '?':
+ 			if (optopt && argv[curind][1] != '-')
+ 				fprintf(stderr, "Unknown option -%c\n", optopt);
 @@ -897,37 +915,43 @@ keepalived_main(int argc, char **argv)
  			openlog(PACKAGE_NAME, LOG_PID | ((__test_bit(LOG_CONSOLE_BIT, &debug)) ? LOG_CONS : 0) , log_facility);
  	}
