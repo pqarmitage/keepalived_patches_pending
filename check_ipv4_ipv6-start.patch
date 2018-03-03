@@ -1,0 +1,337 @@
+diff --git a/keepalived/core/Makefile.am b/keepalived/core/Makefile.am
+index 1e2267c5..9d862f8f 100644
+--- a/keepalived/core/Makefile.am
++++ b/keepalived/core/Makefile.am
+@@ -14,7 +14,7 @@ noinst_LIBRARIES	= libcore.a
+ 
+ libcore_a_SOURCES	= main.c daemon.c pidfile.c layer4.c smtp.c \
+ 			  global_data.c global_parser.c process.c \
+-			  keepalived_netlink.c
++			  keepalived_netlink.c sysctl.c
+ 
+ AM_CPPFLAGS		+= -I$(srcdir)/../include -I$(srcdir)/../../lib
+ 
+diff --git a/keepalived/core/Makefile.in b/keepalived/core/Makefile.in
+index a509e0fa..43bdc13b 100644
+--- a/keepalived/core/Makefile.in
++++ b/keepalived/core/Makefile.in
+@@ -119,7 +119,8 @@ libcore_a_DEPENDENCIES = $(am__append_1) $(am__append_3) \
+ am_libcore_a_OBJECTS = main.$(OBJEXT) daemon.$(OBJEXT) \
+ 	pidfile.$(OBJEXT) layer4.$(OBJEXT) smtp.$(OBJEXT) \
+ 	global_data.$(OBJEXT) global_parser.$(OBJEXT) \
+-	process.$(OBJEXT) keepalived_netlink.$(OBJEXT)
++	process.$(OBJEXT) keepalived_netlink.$(OBJEXT) \
++	sysctl.$(OBJEXT)
+ am__EXTRA_libcore_a_SOURCES_DIST = snmp.c namespaces.c libnl_link.c
+ libcore_a_OBJECTS = $(am_libcore_a_OBJECTS)
+ AM_V_P = $(am__v_P_@AM_V@)
+@@ -298,7 +299,7 @@ AM_LDFLAGS = $(KA_LDFLAGS) $(DEBUG_LDFLAGS)
+ noinst_LIBRARIES = libcore.a
+ libcore_a_SOURCES = main.c daemon.c pidfile.c layer4.c smtp.c \
+ 			  global_data.c global_parser.c process.c \
+-			  keepalived_netlink.c
++			  keepalived_netlink.c sysctl.c
+ 
+ libcore_a_LIBADD = $(am__append_1) $(am__append_3) $(am__append_5)
+ EXTRA_libcore_a_SOURCES = $(am__append_2) $(am__append_4) \
+@@ -363,6 +364,7 @@ distclean-compile:
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/process.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/smtp.Po@am__quote@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/snmp.Po@am__quote@
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/sysctl.Po@am__quote@
+ 
+ .c.o:
+ @am__fastdepCC_TRUE@	$(AM_V_CC)$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
+diff --git a/keepalived/core/main.c b/keepalived/core/main.c
+index 44c80ae8..8feacf11 100644
+--- a/keepalived/core/main.c
++++ b/keepalived/core/main.c
+@@ -33,6 +33,7 @@
+ #include "main.h"
+ #include "config.h"
+ #include "git-commit.h"
++#include "sysctl.h"
+ #include "utils.h"
+ #include "signals.h"
+ #include "pidfile.h"
+@@ -86,6 +87,7 @@ const char *snmp_socket;				/* Socket to use for SNMP agent */
+ static char *syslog_ident;				/* syslog ident if not default */
+ char *instance_name;					/* keepalived instance name */
+ bool use_pid_dir;					/* Put pid files in /var/run/keepalived or @localstatedir@/run/keepalived */
++bool ipv6_enabled;					/* If the kernel has IPv6 functionality enabled/available */
+ 
+ unsigned os_major;					/* Kernel version */
+ unsigned os_minor;
+@@ -1085,6 +1087,16 @@ keepalived_main(int argc, char **argv)
+ 	/* Signal handling initialization  */
+ 	signal_init();
+ 
++	/* Both the vrrp and checker processes can be configured with IPv6,
++	 * but the system may have IPv6 disabled. Check now whether the system
++	 * has IPv6 enabled or not, so the vrrp and checker process don't both
++	 * have to */
++	have_proc_fs = check_dir("/proc/sys");
++	ipv4_enabled = check_dir("/proc/sys/net/ipv4/conf/all");
++	ipv6_enabled = (check_dir("/proc/sys/net/ipv6/conf/all") &&
++			get_sysctl("net/ipv6/conf", "all", "disable_ipv6") >= 1);
++// What do we need procfs for? 
++
+ 	/* Create the master thread */
+ 	master = thread_make_master();
+ 
+diff --git a/keepalived/include/main.h b/keepalived/include/main.h
+index 5e402dde..32011059 100644
+--- a/keepalived/include/main.h
++++ b/keepalived/include/main.h
+@@ -73,6 +73,7 @@ extern bool namespace_with_ipsets;	/* override for namespaces with ipsets on Lin
+ #endif
+ extern char *instance_name;		/* keepalived instance name */
+ extern bool use_pid_dir;		/* pid files in /var/run/keepalived */
++extern bool ipv6_enabled;		/* If the kernel has IPv6 functionality enabled/available */
+ extern unsigned os_major;		/* Kernel version */
+ extern unsigned os_minor;
+ extern unsigned os_release;
+diff --git a/keepalived/vrrp/vrrp_if_config.c b/keepalived/vrrp/vrrp_if_config.c
+index 7d60a805..14b69f89 100644
+--- a/keepalived/vrrp/vrrp_if_config.c
++++ b/keepalived/vrrp/vrrp_if_config.c
+@@ -40,6 +40,9 @@
+ #include "vrrp_if_config.h"
+ #include "keepalived_netlink.h"
+ #include "memory.h"
++#if !defined _HAVE_IPV4_DEVCONF_ || defined _LIBNL_DYNAMIC_ || defined _HAVE_VRRP_VMAC_
++#include "sysctl.h"
++#endif
+ 
+ #ifdef _HAVE_IPV4_DEVCONF_
+ 
+@@ -338,75 +341,6 @@ reset_interface_parameters_devconf(interface_t *base_ifp)
+ #endif
+ #endif
+ 
+-/* Sysctl get and set functions */
+-static void
+-make_sysctl_filename(char *dest, const char* prefix, const char* iface, const char* parameter)
+-{
+-	strcpy(dest, "/proc/sys/");
+-	strcat(dest, prefix);
+-	strcat(dest, "/");
+-	strcat(dest, iface);
+-	strcat(dest, "/");
+-	strcat(dest, parameter);
+-}
+-
+-static int
+-set_sysctl(const char* prefix, const char* iface, const char* parameter, int value)
+-{
+-	char* filename;
+-	char buf[1];
+-	int fd;
+-	ssize_t len;
+-
+-	/* Make the filename */
+-	filename = MALLOC(PATH_MAX);
+-	make_sysctl_filename(filename, prefix, iface, parameter);
+-
+-	fd = open(filename, O_WRONLY);
+-	FREE(filename);
+-	if (fd < 0)
+-		return -1;
+-
+-	/* We only write integers 0-9 */
+-	buf[0] = (char)('0' + value);
+-	len = write(fd, &buf, 1);
+-	close(fd);
+-
+-	if (len != 1)
+-		return -1;
+-
+-	/* Success */
+-	return 0;
+-}
+-
+-static int
+-get_sysctl(const char* prefix, const char* iface, const char* parameter)
+-{
+-	char *filename;
+-	char buf[1];
+-	int fd;
+-	ssize_t len;
+-
+-	/* Make the filename */
+-	filename = MALLOC(PATH_MAX);
+-	make_sysctl_filename(filename, prefix, iface, parameter);
+-
+-	fd = open(filename, O_RDONLY);
+-	FREE(filename);
+-	if (fd < 0)
+-		return -1;
+-
+-	len = read(fd, &buf, 1);
+-	close(fd);
+-
+-	/* We only read integers 0-9 */
+-	if (len <= 0)
+-		return -1;
+-
+-	/* Return the value of the string read */
+-	return buf[0] - '0';
+-}
+-
+ #if !defined _HAVE_IPV4_DEVCONF_ || defined _LIBNL_DYNAMIC_
+ static inline void
+ set_promote_secondaries_sysctl(interface_t *ifp)
+@@ -523,6 +457,10 @@ reset_promote_secondaries(interface_t *ifp)
+  * This should not alter the operation of any interface, or any interface
+  * subsequently created, but it does allow us to set rp_filter = 0
+  * on vmac interfaces.
++ *
++ * This problem is mainly caused by systemd setting net.ipv4.conf.all.rp_filter = 1 by
++ * default.
++ * A bug has been filed against systemd at https://github.com/systemd/systemd/issues/6282.
+  */
+ static void
+ clear_rp_filter(void)
+diff --git a//dev/null b/keepalived/core/sysctl.c
+index 00000000..14b69f89 100644
+--- a/dev/null
++++ b/keepalived/core/sysctl.c
++/*
++ * Soft:        Keepalived is a failover program for the LVS project
++ *              <www.linuxvirtualserver.org>. It monitor & manipulate
++ *              a loadbalanced server pool using multi-layer checks.
++ *
++ * Part:        sysctl interface
++ *
++ * Author:      Alexandre Cassen, <acassen@linux-vs.org>
++ *
++ *              This program is distributed in the hope that it will be useful,
++ *              but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *              MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ *              See the GNU General Public License for more details.
++ *
++ *              This program is free software; you can redistribute it and/or
++ *              modify it under the terms of the GNU General Public License
++ *              as published by the Free Software Foundation; either version
++ *              2 of the License, or (at your option) any later version.
++ *
++ * Copyright (C) 2001-2018 Alexandre Cassen, <acassen@gmail.com>
++ */
++
++#include "config.h"
++
++#include <string.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <limits.h>
++
++#include "memory.h"
++
++/* Sysctl get and set functions */
++static void
++make_sysctl_filename(char *dest, const char* prefix, const char* iface, const char* parameter)
++{
++	strcpy(dest, "/proc/sys/");
++	strcat(dest, prefix);
++	strcat(dest, "/");
++	strcat(dest, iface);
++	strcat(dest, "/");
++	strcat(dest, parameter);
++}
++
++#ifdef _HAVE_VRRP_VMAC_
++int
++set_sysctl(const char* prefix, const char* iface, const char* parameter, int value)
++{
++	char* filename;
++	char buf[1];
++	int fd;
++	ssize_t len;
++
++	/* Make the filename */
++	filename = MALLOC(PATH_MAX);
++	make_sysctl_filename(filename, prefix, iface, parameter);
++
++	fd = open(filename, O_WRONLY);
++	FREE(filename);
++	if (fd < 0)
++		return -1;
++
++	/* We only write integers 0-9 */
++	buf[0] = (char)('0' + value);
++	len = write(fd, &buf, 1);
++	close(fd);
++
++	if (len != 1)
++		return -1;
++
++	/* Success */
++	return 0;
++}
++#endif
++
++int
++get_sysctl(const char* prefix, const char* iface, const char* parameter)
++{
++	char *filename;
++	char buf[1];
++	int fd;
++	ssize_t len;
++
++	/* Make the filename */
++	filename = MALLOC(PATH_MAX);
++	make_sysctl_filename(filename, prefix, iface, parameter);
++
++	fd = open(filename, O_RDONLY);
++	FREE(filename);
++	if (fd < 0)
++		return -1;
++
++	len = read(fd, &buf, 1);
++	close(fd);
++
++	/* We only read integers 0-9 */
++	if (len <= 0)
++		return -1;
++
++	/* Return the value of the string read */
++	return buf[0] - '0';
++}
+diff --git a/dev/null b/keepalived/include/sysctl.h
+index 00000000..14b69f89 100644
+--- a/dev/null
++++ b/keepalived/include/sysctl.h
++/*
++ * Soft:        Keepalived is a failover program for the LVS project
++ *              <www.linuxvirtualserver.org>. It monitor & manipulate
++ *              a loadbalanced server pool using multi-layer checks.
++ *
++ * Part:        sysctl.c include file.
++ *
++ * Author:      Alexandre Cassen, <acassen@linux-vs.org>
++ *
++ *              This program is distributed in the hope that it will be useful,
++ *              but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *              MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ *              See the GNU General Public License for more details.
++ *
++ *              This program is free software; you can redistribute it and/or
++ *              modify it under the terms of the GNU General Public License
++ *              as published by the Free Software Foundation; either version
++ *              2 of the License, or (at your option) any later version.
++ *
++ * Copyright (C) 2001-2018 Alexandre Cassen, <acassen@gmail.com>
++ */
++
++#ifndef _KEEPALIVED_SYSCTL_H
++#define _KEEPALIVED_SYSCTL_H 1
++
++#include <stdbool.h>
++
++/* prototypes */
++#ifdef _HAVE_VRRP_VMAC_
++extern int set_sysctl(const char*, const char*, const char*, int);
++#endif
++extern int get_sysctl(const char*, const char*, const char*);
++
++#endif
