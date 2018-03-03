@@ -1,0 +1,280 @@
+diff --git a/keepalived/check/check_daemon.c b/keepalived/check/check_daemon.c
+index 72f87b42..99cddec9 100644
+--- a/keepalived/check/check_daemon.c
++++ b/keepalived/check/check_daemon.c
+@@ -209,7 +209,6 @@ start_check(list old_checkers_queue)
+ 	register_checkers_thread();
+ }
+ 
+-#ifndef _DEBUG_
+ /* Reload thread */
+ static int
+ reload_check_thread(__attribute__((unused)) thread_t * thread)
+@@ -273,13 +272,16 @@ sigend_check(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
+ static void
+ check_signal_init(void)
+ {
++#ifndef _DEBUG_
+ 	signal_handler_child_clear();
++#endif
+ 	signal_set(SIGHUP, sighup_check, NULL);
+ 	signal_set(SIGINT, sigend_check, NULL);
+ 	signal_set(SIGTERM, sigend_check, NULL);
+ 	signal_ignore(SIGPIPE);
+ }
+ 
++#ifndef _DEBUG_
+ /* CHECK Child respawning thread */
+ static int
+ check_respawn_thread(thread_t * thread)
+@@ -385,10 +387,8 @@ start_check_child(void)
+ 	 */
+ 	UNSET_RELOAD;
+ 
+-#ifndef _DEBUG_
+ 	/* Signal handling initialization */
+ 	check_signal_init();
+-#endif
+ 
+ 	/* Start Healthcheck daemon */
+ 	start_check(NULL);
+diff --git a/keepalived/core/main.c b/keepalived/core/main.c
+index c9841e76..fda682d6 100644
+--- a/keepalived/core/main.c
++++ b/keepalived/core/main.c
+@@ -359,11 +359,13 @@ propogate_signal(__attribute__((unused)) void *v, int sig)
+ 		kill(checkers_child, sig);
+ #endif
+ }
++#endif
+ 
+ /* Terminate handler */
+ static void
+ sigend(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
+ {
++#ifndef _DEBUG_
+ 	int status;
+ 	int ret;
+ 	int wait_count = 0;
+@@ -378,6 +380,7 @@ sigend(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
+ 	thread_add_terminate_event(master);
+ 
+ 	log_message(LOG_INFO, "Stopping");
++
+ 	sigprocmask(0, NULL, &old_set);
+ 	if (!sigismember(&old_set, SIGCHLD)) {
+ 		sigemptyset(&child_wait);
+@@ -446,6 +449,8 @@ sigend(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
+ 
+ 	if (!sigismember(&old_set, SIGCHLD))
+ 		sigprocmask(SIG_UNBLOCK, &child_wait, NULL);
++#else
++#endif
+ }
+ 
+ /* Initialize signal handler */
+@@ -453,17 +458,18 @@ static void
+ signal_init(void)
+ {
+ 	signal_handler_init();
++#ifndef _DEBUG_
+ 	signal_set(SIGHUP, propogate_signal, NULL);
+ 	signal_set(SIGUSR1, propogate_signal, NULL);
+ 	signal_set(SIGUSR2, propogate_signal, NULL);
+ #ifdef _WITH_JSON_
+ 	signal_set(SIGJSON, propogate_signal, NULL);
+ #endif
++#endif
+ 	signal_set(SIGINT, sigend, NULL);
+ 	signal_set(SIGTERM, sigend, NULL);
+ 	signal_ignore(SIGPIPE);
+ }
+-#endif
+ 
+ /* To create a core file when abrt is running (a RedHat distribution),
+  * and keepalived isn't installed from an RPM package, edit the file
+@@ -1084,10 +1090,8 @@ keepalived_main(int argc, char **argv)
+ 	if (!pidfile_write(main_pidfile, getpid()))
+ 		goto end;
+ 
+-#ifndef _DEBUG_
+ 	/* Signal handling initialization  */
+ 	signal_init();
+-#endif
+ 
+ 	/* Create the master thread */
+ 	master = thread_make_master();
+diff --git a/keepalived/vrrp/vrrp_daemon.c b/keepalived/vrrp/vrrp_daemon.c
+index a2984bfe..c9043c92 100644
+--- a/keepalived/vrrp/vrrp_daemon.c
++++ b/keepalived/vrrp/vrrp_daemon.c
+@@ -79,9 +79,7 @@ static int print_vrrp_stats(thread_t * thread);
+ #ifdef _WITH_JSON_
+ static int print_vrrp_json(thread_t * thread);
+ #endif
+-#ifndef _DEBUG_
+ static int reload_vrrp_thread(thread_t * thread);
+-#endif
+ 
+ static char *vrrp_syslog_ident;
+ 
+@@ -194,7 +192,9 @@ stop_vrrp(int status)
+ #endif
+ 	close_std_fd();
+ 
++#ifndef _DEBUG_
+ 	exit(status);
++#endif
+ }
+ 
+ /* Daemon init sequence */
+@@ -351,7 +351,6 @@ start_vrrp(void)
+ 			 VRRP_DISPATCHER);
+ }
+ 
+-#ifndef _DEBUG_
+ static void
+ sighup_vrrp(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
+ {
+@@ -396,7 +395,9 @@ sigend_vrrp(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
+ static void
+ vrrp_signal_init(void)
+ {
++#ifndef _DEBUG_
+ 	signal_handler_child_clear();
++#endif
+ 	signal_set(SIGHUP, sighup_vrrp, NULL);
+ 	signal_set(SIGINT, sigend_vrrp, NULL);
+ 	signal_set(SIGTERM, sigend_vrrp, NULL);
+@@ -469,7 +470,6 @@ reload_vrrp_thread(__attribute__((unused)) thread_t * thread)
+ 
+ 	return 0;
+ }
+-#endif
+ 
+ static int
+ print_vrrp_data(__attribute__((unused)) thread_t * thread)
+@@ -602,10 +602,8 @@ start_vrrp_child(void)
+ 	 */
+ 	UNSET_RELOAD;
+ 
+-#ifndef _DEBUG_
+ 	/* Signal handling initialization */
+ 	vrrp_signal_init();
+-#endif
+ 
+ #ifdef _LIBNL_DYNAMIC_
+ 	libnl_init();
+diff --git a/lib/signals.c b/lib/signals.c
+index 2e504086..204e3227 100644
+--- a/lib/signals.c
++++ b/lib/signals.c
+@@ -45,6 +45,11 @@
+ #include "utils.h"
+ #include "logger.h"
+ 
++#ifdef _DEBUG_
++#include "list.h"
++#include "memory.h"
++#endif
++
+ #ifdef _WITH_JSON_
+ #include "../keepalived/include/vrrp_json.h"
+ #endif
+@@ -74,9 +79,17 @@
+   #endif
+ #endif
+ 
++typedef struct _signal_param {
++	void (*signal_handler_func) (void *, int sig);
++	void *signal_v;
++} signal_param;
++
+ /* Local Vars */
+-static void (*signal_handler_func[SIG_MAX]) (void *, int sig);
+-static void *signal_v[SIG_MAX];
++#ifndef _DEBUG_
++static signal_param signal_params[SIG_MAX];
++#else
++static list signal_params[SIG_MAX];	/* List of signal_param */
++#endif
+ 
+ static int signal_pipe[2] = { -1, -1 };
+ 
+@@ -140,6 +153,14 @@ signal_handler(int sig)
+ 	}
+ }
+ 
++#ifdef _DEBUG_
++static void
++free_signal_ent(void *ent)
++{
++	FREE(ent);
++}
++#endif
++
+ /* Signal wrapper */
+ void *
+ signal_set(int signo, void (*func) (void *, int), void *v)
+@@ -184,8 +205,17 @@ signal_set(int signo, void (*func) (void *, int), void *v)
+ 
+ 	ret = sigaction(signo, &sig, &osig);
+ 
+-	signal_handler_func[signo-1] = func;
+-	signal_v[signo-1] = v;
++#ifndef _DEBUG_
++	signal_params[signo-1].signal_handler_func = func;
++	signal_params[signo-1].signal_v = v;
++#else
++	if (!LIST_EXISTS(signal_params[signo-1]))
++		signal_params[signo-1] = alloc_list(free_signal_ent, NULL);
++	signal_param *params = MALLOC(sizeof *params);
++	params->signal_handler_func = func;
++	params->signal_v = v;
++	list_add(signal_params[signo-1], params);
++#endif
+ 
+ 	if (ret < 0)
+ 		return (SIG_ERR);
+@@ -209,8 +239,14 @@ clear_signal_handler_addresses(void)
+ {
+ 	int i;
+ 
+-	for (i = 0; i < SIG_MAX; i++)
+-		signal_handler_func[i] = NULL;
++	for (i = 0; i < SIG_MAX; i++) {
++#ifndef _DEBUG_
++		signal_params[i].signal_handler_func = NULL;
++#else
++		if (LIST_EXISTS(signal_params[i]))
++			free_list(&signal_params[i]);
++#endif
++	}
+ }
+ 
+ /* Handlers intialization */
+@@ -363,9 +399,21 @@ signal_run_callback(void)
+ {
+ 	int sig;
+ 
+-	while(read(signal_pipe[0], &sig, sizeof(int)) == sizeof(int)) {
+-		if (sig >= 1 && sig <= SIG_MAX && signal_handler_func[sig-1])
+-			signal_handler_func[sig-1](signal_v[sig-1], sig);
++	while (read(signal_pipe[0], &sig, sizeof(int)) == sizeof(int)) {
++		if (sig >= 1 && sig <= SIG_MAX) {
++#ifndef _DEBUG_
++			if (signal_params[sig-1].signal_handler_func)
++				signal_params[sig-1].signal_handler_func(signal_params[sig-1].signal_v, sig);
++#else
++			element e;
++			if (LIST_EXISTS(signal_params[sig-1])) {
++				for (e = LIST_HEAD(signal_params[sig-1]); e; ELEMENT_NEXT(e)) {
++					signal_param *sp = ELEMENT_DATA(e);
++					sp->signal_handler_func(sp->signal_v, sig);
++				}
++			}
++#endif
++		}
+ 	}
+ }
+ 
