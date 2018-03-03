@@ -1,0 +1,269 @@
+diff --git a/configure b/configure
+index 7e1ab9cd..711c4084 100755
+--- a/configure
++++ b/configure
+@@ -8085,6 +8085,19 @@ fi
+ cat >>confdefs.h <<_ACEOF
+ #define HAVE_DECL_FRA_UID_RANGE $ac_have_decl
+ _ACEOF
++ac_fn_c_check_decl "$LINENO" "RTA_TTL_PROPAGATE" "ac_cv_have_decl_RTA_TTL_PROPAGATE" "#include <linux/rtnetlink.h>
++    #include <sys/socket.h>
++    #include <linux/fib_rules.h>
++"
++if test "x$ac_cv_have_decl_RTA_TTL_PROPAGATE" = xyes; then :
++  ac_have_decl=1
++else
++  ac_have_decl=0
++fi
++
++cat >>confdefs.h <<_ACEOF
++#define HAVE_DECL_RTA_TTL_PROPAGATE $ac_have_decl
++_ACEOF
+ ac_fn_c_check_decl "$LINENO" "RTAX_FASTOPEN_NO_COOKIE" "ac_cv_have_decl_RTAX_FASTOPEN_NO_COOKIE" "#include <linux/rtnetlink.h>
+     #include <sys/socket.h>
+     #include <linux/fib_rules.h>
+@@ -8125,7 +8138,7 @@ cat >>confdefs.h <<_ACEOF
+ #define HAVE_DECL_FRA_OIFNAME $ac_have_decl
+ _ACEOF
+ 
+-for flag in RTA_ENCAP RTA_EXPIRES RTA_NEWDST RTA_PREF FRA_SUPPRESS_PREFIXLEN FRA_SUPPRESS_IFGROUP FRA_TUN_ID RTAX_CC_ALGO RTAX_QUICKACK RTEXT_FILTER_SKIP_STATS FRA_L3MDEV FRA_UID_RANGE RTAX_FASTOPEN_NO_COOKIE RTA_VIA FRA_OIFNAME; do
++for flag in RTA_ENCAP RTA_EXPIRES RTA_NEWDST RTA_PREF FRA_SUPPRESS_PREFIXLEN FRA_SUPPRESS_IFGROUP FRA_TUN_ID RTAX_CC_ALGO RTAX_QUICKACK RTEXT_FILTER_SKIP_STATS FRA_L3MDEV FRA_UID_RANGE RTA_TTL_PROPAGATE RTAX_FASTOPEN_NO_COOKIE RTA_VIA FRA_OIFNAME; do
+   eval decl_var=\$ac_cv_have_decl_$flag
+   if test ${decl_var} = yes; then
+     BUILD_OPTIONS="$BUILD_OPTIONS "${flag}
+diff --git a/configure.ac b/configure.ac
+index 80c28a0c..8fa3dec6 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -644,12 +644,13 @@ dnl --RTEXT_FILTER_SKIP_STATS	dnl -- Linux 4.4
+ dnl --RTA_EXPIRES		dnl -- Linux 4.5
+ dnl --FRA_L3MDEV		dnl -- Linux 4.8
+ dnl --FRA_UID_RANGE		dnl -- Linux 4.10
++dnl --RTA_TTL_PROPAGATE		dnl -- Linux 4.12
+ dnl --RTAX_FASTOPEN_NO_COOKIE	dnl -- Linux 4.15
+-AC_CHECK_DECLS([RTA_ENCAP, RTA_EXPIRES, RTA_NEWDST, RTA_PREF, FRA_SUPPRESS_PREFIXLEN, FRA_SUPPRESS_IFGROUP, FRA_TUN_ID, RTAX_CC_ALGO, RTAX_QUICKACK, RTEXT_FILTER_SKIP_STATS, FRA_L3MDEV, FRA_UID_RANGE, RTAX_FASTOPEN_NO_COOKIE, RTA_VIA, FRA_OIFNAME], [], [],
++AC_CHECK_DECLS([RTA_ENCAP, RTA_EXPIRES, RTA_NEWDST, RTA_PREF, FRA_SUPPRESS_PREFIXLEN, FRA_SUPPRESS_IFGROUP, FRA_TUN_ID, RTAX_CC_ALGO, RTAX_QUICKACK, RTEXT_FILTER_SKIP_STATS, FRA_L3MDEV, FRA_UID_RANGE, RTA_TTL_PROPAGATE, RTAX_FASTOPEN_NO_COOKIE, RTA_VIA, FRA_OIFNAME], [], [],
+   [[#include <linux/rtnetlink.h>
+     #include <sys/socket.h>
+     #include <linux/fib_rules.h>]])
+-for flag in RTA_ENCAP RTA_EXPIRES RTA_NEWDST RTA_PREF FRA_SUPPRESS_PREFIXLEN FRA_SUPPRESS_IFGROUP FRA_TUN_ID RTAX_CC_ALGO RTAX_QUICKACK RTEXT_FILTER_SKIP_STATS FRA_L3MDEV FRA_UID_RANGE RTAX_FASTOPEN_NO_COOKIE RTA_VIA FRA_OIFNAME; do
++for flag in RTA_ENCAP RTA_EXPIRES RTA_NEWDST RTA_PREF FRA_SUPPRESS_PREFIXLEN FRA_SUPPRESS_IFGROUP FRA_TUN_ID RTAX_CC_ALGO RTAX_QUICKACK RTEXT_FILTER_SKIP_STATS FRA_L3MDEV FRA_UID_RANGE RTA_TTL_PROPAGATE RTAX_FASTOPEN_NO_COOKIE RTA_VIA FRA_OIFNAME; do
+   AS_VAR_COPY([decl_var], [ac_cv_have_decl_$flag])
+   if test ${decl_var} = yes; then
+     add_build_opt[${flag}]
+diff --git a/doc/KEEPALIVED-MIB.txt b/doc/KEEPALIVED-MIB.txt
+index f79d3f49..7bb59759 100644
+--- a/doc/KEEPALIVED-MIB.txt
++++ b/doc/KEEPALIVED-MIB.txt
+@@ -22,12 +22,14 @@ IMPORTS
+         FROM SNMPv2-TC;
+ 
+ keepalived MODULE-IDENTITY
+-     LAST-UPDATED "201803010000Z"
++     LAST-UPDATED "201803020000Z"
+      ORGANIZATION "Keepalived"
+      CONTACT-INFO "http://www.keepalived.org"
+      DESCRIPTION
+         "This MIB describes objects used by keepalived, both
+          for VRRP and health checker."
++     REVISION "201803020000Z"
++     DESCRIPTION "add route option ttl-propagate"
+      REVISION "201803010000Z"
+      DESCRIPTION "add route option fastopen_no_cookie and rule option l3mdev"
+      REVISION "201709150000Z"
+@@ -1028,7 +1030,8 @@ VrrpRouteEntry ::= SEQUENCE {
+     vrrpRouteEncapTTL Unsigned32,
+     vrrpRouteEncapFlags Unsigned32,
+     vrrpRouteEncapIlaLocator Counter64,
+-    vrrpRouteFastOpenNoCookie TruthValue
++    vrrpRouteFastOpenNoCookie TruthValue,
++    vrrpRouteTTLPropagate TruthValue
+ }
+ 
+ vrrpRouteIndex OBJECT-TYPE
+@@ -1472,6 +1475,14 @@ vrrpRouteFastOpenNoCookie OBJECT-TYPE
+         "Fast open no cookie."
+     ::= { vrrpRouteEntry 55 }
+ 
++vrrpRouteTTLPropagate OBJECT-TYPE
++    SYNTAX TruthValue
++    MAX-ACCESS read-only
++    STATUS current
++    DESCRIPTION
++        "Propagate TTL."
++    ::= { vrrpRouteEntry 56 }
++
+ -- Route next hops
+ -- see vrrp_iproute.h
+ 
+@@ -3708,6 +3719,7 @@ vrrpInstanceGroup OBJECT-GROUP
+     vrrpRouteEncapFlags,
+     vrrpRouteEncapIlaLocator,
+     vrrpRouteFastOpenNoCookie,
++    vrrpRouteTTLPropagate,
+     vrrpRouteNextHopAddressType,
+     vrrpRouteNextHopAddress,
+     vrrpRouteNextHopIfIndex,
+diff --git a/doc/keepalived.conf.SYNOPSIS b/doc/keepalived.conf.SYNOPSIS
+index 9e8dcb76..8da21c4a 100644
+--- a/doc/keepalived.conf.SYNOPSIS
++++ b/doc/keepalived.conf.SYNOPSIS
+@@ -376,7 +376,7 @@ static_routes {                 # block identification
+                                 # The syntax is the same as ip route add, without "ip route add" e.g.
+     192.168.100.0/24 table 6909 nexthop via 192.168.101.1 dev wlan0 onlink weight 1 nexthop via 192.168.101.2 dev wlan0 onlink weight 2
+     192.168.200.0/24 dev p33p1.2 table 6909 tos 0x04 protocol bird scope link priority 12 mtu 1000 hoplimit 100 advmss 101 rtt 102 rttvar 103 reordering 104 window 105 cwnd 106 ssthresh lock 107 realms PQA/0x14 rto_min 108 initcwnd 109 initrwnd 110 features ecn
+-    2001:470:69e9:1:2::4 dev p33p1.2 table 6909 tos 0x04 protocol bird scope link priority 12 mtu 1000 hoplimit 100 advmss 101 rtt 102 rttvar 103 reordering 104 window 105 cwnd 106 ssthresh lock 107 rto_min 108 initcwnd 109 initrwnd 110 features ecn fastopen_no_cookie 1
++    2001:470:69e9:1:2::4 dev p33p1.2 table 6909 tos 0x04 protocol bird scope link priority 12 mtu 1000 hoplimit 100 advmss 101 rtt 102 rttvar 103 reordering 104 window 105 cwnd 106 ssthresh lock 107 rto_min 108 initcwnd 109 initrwnd 110 features ecn fastopen_no_cookie 1 ttl-propagate enabled
+ }
+ 
+ 2. VRRP configuration
+diff --git a/doc/man/man5/keepalived.conf.5 b/doc/man/man5/keepalived.conf.5
+index ac3dd0ff..8d9642bc 100644
+--- a/doc/man/man5/keepalived.conf.5
++++ b/doc/man/man5/keepalived.conf.5
+@@ -404,7 +404,7 @@ bits of the address.
+  192.168.2.0/24 via 192.168.1.100 dev eth0
+  192.168.100.0/24 table 6909 nexthop via 192.168.101.1 dev wlan0 onlink weight 1 nexthop via 192.168.101.2 dev wlan0 onlink weight 2
+  192.168.200.0/24 dev p33p1.2 table 6909 tos 0x04 protocol bird scope link priority 12 mtu 1000 hoplimit 100 advmss 101 rtt 102 rttvar 103 reordering 104 window 105 cwnd 106 ssthresh lock 107 realms PQA/0x14 rto_min 108 initcwnd 109 initrwnd 110 features ecn
+- 2001:470:69e9:1:2::4 dev p33p1.2 table 6909 tos 0x04 protocol bird scope link priority 12 mtu 1000 hoplimit 100 advmss 101 rtt 102 rttvar 103 reordering 104 window 105 cwnd 106 ssthresh lock 107 rto_min 108 initcwnd 109 initrwnd 110 features ecn fastopen_no_cookie 1
++ 2001:470:69e9:1:2::4 dev p33p1.2 table 6909 tos 0x04 protocol bird scope link priority 12 mtu 1000 hoplimit 100 advmss 101 rtt 102 rttvar 103 reordering 104 window 105 cwnd 106 ssthresh lock 107 rto_min 108 initcwnd 109 initrwnd 110 features ecn fastopen_no_cookie 1 ttl-propagate enabled
+  ...
+  }
+ .PP
+diff --git a/keepalived/include/vrrp_iproute.h b/keepalived/include/vrrp_iproute.h
+index 6688c130..e69b1e51 100644
+--- a/keepalived/include/vrrp_iproute.h
++++ b/keepalived/include/vrrp_iproute.h
+@@ -146,6 +146,7 @@ enum ip_route {
+ 	IPROUTE_QUICKACK,
+ 	IPROUTE_PREF,
+ 	IPROUTE_FASTOPEN_NO_COOKIE,
++	IPROUTE_TTL_PROPAGATE,
+ };
+ 
+ #define	IPROUTE_BIT_DSFIELD	(1<<IPROUTE_DSFIELD)
+@@ -170,6 +171,7 @@ enum ip_route {
+ #define	IPROUTE_BIT_QUICKACK	(1<<IPROUTE_QUICKACK)
+ #define	IPROUTE_BIT_PREF	(1<<IPROUTE_PREF)
+ #define	IPROUTE_BIT_FASTOPEN_NO_COOKIE	(1<<IPROUTE_FASTOPEN_NO_COOKIE)
++#define	IPROUTE_BIT_TTL_PROPAGATE	(1<<IPROUTE_TTL_PROPAGATE)
+ 
+ typedef struct _ip_route {
+ 	ip_address_t		*dst;
+@@ -216,6 +218,9 @@ typedef struct _ip_route {
+ #if HAVE_DECL_RTAX_FASTOPEN_NO_COOKIE
+ 	bool			fastopen_no_cookie;
+ #endif
++#if HAVE_DECL_RTA_TTL_PROPAGATE
++	bool			ttl_propagate;
++#endif
+ 	uint8_t			type;
+ 
+ 	uint32_t		realms;
+diff --git a/keepalived/vrrp/vrrp_iproute.c b/keepalived/vrrp/vrrp_iproute.c
+index d9372a31..3a36f64b 100644
+--- a/keepalived/vrrp/vrrp_iproute.c
++++ b/keepalived/vrrp/vrrp_iproute.c
+@@ -466,6 +466,11 @@ netlink_route(ip_route_t *iproute, int cmd)
+ 		rta_addattr32(rta, sizeof(buf), RTAX_FASTOPEN_NO_COOKIE, iproute->fastopen_no_cookie);
+ #endif
+ 
++#if HAVE_DECL_RTA_TTL_PROPAGATE
++	if (iproute->mask & IPROUTE_BIT_TTL_PROPAGATE)
++		addattr8(&req.n, sizeof(req), RTA_TTL_PROPAGATE, iproute->ttl_propagate);
++#endif
++
+ 	if (rta->rta_len > RTA_LENGTH(0)) {
+ 		if (iproute->lock)
+ 			rta_addattr32(rta, sizeof(buf), RTAX_LOCK, iproute->lock);
+@@ -847,6 +852,11 @@ format_iproute(ip_route_t *route, char *buf, size_t buf_len)
+ 		op += (size_t)snprintf(op, (size_t)(buf_end - op), " %s %u", "fastopen_no_cookie", route->fastopen_no_cookie);
+ #endif
+ 
++#if HAVE_DECL_RTA_TTL_PROPAGATE
++	if (route->mask & IPROUTE_BIT_TTL_PROPAGATE)
++		op += (size_t)snprintf(op, (size_t)(buf_end - op), " %s %sabled", "ttl-propagate", route->ttl_propagate ? "en" : "dis");
++#endif
++
+ 	if (!LIST_ISEMPTY(route->nhs)) {
+ 		for (e = LIST_HEAD(route->nhs); e; ELEMENT_NEXT(e)) {
+ 			nh = ELEMENT_DATA(e);
+@@ -1632,6 +1642,24 @@ alloc_route(list rt_list, vector_t *strvec)
+ 			log_message(LOG_INFO, "%s not supported by kernel", "fastopen_no_cookie");
+ #endif
+ 		}
++		else if (!strcmp(str, "ttl-propagate")) {
++			i++;
++#if HAVE_DECL_RTA_TTL_PROPAGATE
++			str = strvec_slot(strvec, i);
++			new->mask |= IPROUTE_BIT_TTL_PROPAGATE;
++			if (!strcmp(str, "enabled"))
++				new->ttl_propagate = true;
++			else if (!strcmp(str, "disabled"))
++				new->ttl_propagate = false;
++			else {
++				log_message(LOG_INFO, "Unknown value %s for ttl-propagate", str);
++				new->mask &= ~IPROUTE_BIT_TTL_PROPAGATE;
++				goto err;
++			}
++#else
++			log_message(LOG_INFO, "%s not supported by kernel", "ttl-propagate");
++#endif
++		}
+ 		/* Maintained for backward compatibility */
+ 		else if (!strcmp(str, "or")) {
+ 			log_message(LOG_INFO, "\"or\" for routes is deprecated. Please use \"nexthop\"");
+diff --git a/keepalived/vrrp/vrrp_snmp.c b/keepalived/vrrp/vrrp_snmp.c
+index bc2eec3d..1d5420c5 100644
+--- a/keepalived/vrrp/vrrp_snmp.c
++++ b/keepalived/vrrp/vrrp_snmp.c
+@@ -263,6 +263,7 @@ enum snmp_route_magic {
+ 	VRRP_SNMP_ROUTE_ENCAP_FLAGS,
+ 	VRRP_SNMP_ROUTE_ENCAP_ILA_LOCATOR,
+ 	VRRP_SNMP_ROUTE_FASTOPEN_NO_COOKIE,
++	VRRP_SNMP_ROUTE_TTL_PROPAGATE,
+ };
+ 
+ enum snmp_next_hop_magic {
+@@ -1094,6 +1095,15 @@ vrrp_snmp_route(struct variable *vp, oid *name, size_t *length,
+ 		long_ret.u = route->fastopen_no_cookie;
+ 		return (u_char *)&long_ret;
+ #endif
++	case VRRP_SNMP_ROUTE_TTL_PROPAGATE:
++#if !HAVE_DECL_RTA_TTL_PROPAGATE
++		break;
++#else
++		if (!(route->mask & IPROUTE_BIT_TTL_PROPAGATE))
++			break;
++		long_ret.u = route->ttl_propagate;
++		return (u_char *)&long_ret;
++#endif
+ 	case VRRP_SNMP_ROUTE_REALM_DST:
+ 		if (!route->realms)
+ 			break;
+@@ -2346,6 +2356,10 @@ static struct variable8 vrrp_vars[] = {
+ 	{VRRP_SNMP_ROUTE_FASTOPEN_NO_COOKIE, ASN_UNSIGNED, RONLY,
+ 	 vrrp_snmp_route, 3, {7, 1, 55}},
+ #endif
++#if HAVE_DECL_RTA_TTL_PROPAGATE
++	{VRRP_SNMP_ROUTE_TTL_PROPAGATE, ASN_UNSIGNED, RONLY,
++	 vrrp_snmp_route, 3, {7, 1, 56}},
++#endif
+ #endif
+ 
+ 	 /* vrrpRuleTable */
+diff --git a/lib/config.h.in b/lib/config.h.in
+index 96dd06dc..2ff3ec34 100644
+--- a/lib/config.h.in
++++ b/lib/config.h.in
+@@ -167,6 +167,10 @@
+    don't. */
+ #undef HAVE_DECL_RTA_PREF
+ 
++/* Define to 1 if you have the declaration of `RTA_TTL_PROPAGATE', and to 0 if
++   you don't. */
++#undef HAVE_DECL_RTA_TTL_PROPAGATE
++
+ /* Define to 1 if you have the declaration of `RTA_VIA', and to 0 if you
+    don't. */
+ #undef HAVE_DECL_RTA_VIA
