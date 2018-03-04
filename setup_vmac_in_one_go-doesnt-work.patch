@@ -1,0 +1,340 @@
+diff --git a/keepalived/core/keepalived_netlink.c b/keepalived/core/keepalived_netlink.c
+index 7e25e8c1..b788791a 100644
+--- a/keepalived/core/keepalived_netlink.c
++++ b/keepalived/core/keepalived_netlink.c
+@@ -458,6 +458,22 @@ addattr64(struct nlmsghdr *n, size_t maxlen, unsigned short type, uint64_t data)
+ 	return addattr_l(n, maxlen, type, &data, sizeof(data));
+ }
+ 
++struct rtattr *
++addattr_nest(struct nlmsghdr *n, size_t maxlen, unsigned short type)
++{
++	struct rtattr *nest = NLMSG_TAIL(n);
++
++	addattr_l(n, maxlen, type, NULL, 0);
++	return nest;
++}
++
++size_t
++addattr_nest_end(struct nlmsghdr *n, struct rtattr *nest)
++{
++	nest->rta_len = (unsigned short)((void *)NLMSG_TAIL(n) - (void *)nest);
++	return n->nlmsg_len;
++}
++
+ int
+ addattr_l2(struct nlmsghdr *n, size_t maxlen, unsigned short type, void *data, size_t alen, void *data2, size_t alen2)
+ {
+diff --git a/keepalived/include/keepalived_netlink.h b/keepalived/include/keepalived_netlink.h
+index d7bcc33b..10ce1db6 100644
+--- a/keepalived/include/keepalived_netlink.h
++++ b/keepalived/include/keepalived_netlink.h
+@@ -79,6 +79,8 @@ extern int addattr_l(struct nlmsghdr *, size_t, unsigned short, void *, size_t);
+ extern int addattr8(struct nlmsghdr *, size_t, unsigned short, uint8_t);
+ extern int addattr32(struct nlmsghdr *, size_t, unsigned short, uint32_t);
+ extern int addattr64(struct nlmsghdr *, size_t, unsigned short, uint64_t);
++extern struct rtattr *addattr_nest(struct nlmsghdr *, size_t, unsigned short);
++extern size_t addattr_nest_end(struct nlmsghdr *, struct rtattr *);
+ extern int addattr_l2(struct nlmsghdr *, size_t, unsigned short, void *, size_t, void *, size_t);
+ extern int addraw_l(struct nlmsghdr *, size_t, const void *, size_t);
+ extern size_t rta_addattr_l(struct rtattr *, size_t, unsigned short, const void *, size_t);
+diff --git a/keepalived/vrrp/vrrp_vmac.c b/keepalived/vrrp/vrrp_vmac.c
+index ae6ffeeb..10218272 100644
+--- a/keepalived/vrrp/vrrp_vmac.c
++++ b/keepalived/vrrp/vrrp_vmac.c
+@@ -193,6 +193,12 @@ netlink_link_add_vmac(vrrp_t *vrrp)
+ 		struct ifinfomsg ifi;
+ 		char buf[256];
+ 	} req;
++#if HAVE_DECL_IFA_FLAGS
++        uint32_t
++#else
++        uint8_t
++#endif
++		ifa_flags = 0;
+ 
+ 	if (!vrrp->ifp || __test_bit(VRRP_VMAC_UP_BIT, &vrrp->vmac_flags) || !vrrp->vrid)
+ 		return false;
+@@ -204,8 +210,6 @@ netlink_link_add_vmac(vrrp_t *vrrp)
+ 
+ 	ll_addr[ETH_ALEN-1] = vrrp->vrid;
+ 
+-	memset(&req, 0, sizeof (req));
+-
+ 	/*
+ 	 * Check to see if this vmac interface was created
+ 	 * by a previous instance.
+@@ -243,12 +247,14 @@ netlink_link_add_vmac(vrrp_t *vrrp)
+ 			create_interface = false;
+ 	}
+ 
++	memset(&req, 0, sizeof (req));
++	req.n.nlmsg_len = NLMSG_LENGTH(sizeof (struct ifinfomsg));
++	req.n.nlmsg_type = RTM_NEWLINK;
++
+ 	if (create_interface && vrrp->ifp->base_ifp->ifindex) {
+ 		/* Request that NETLINK create the VIF interface */
+-		req.n.nlmsg_len = NLMSG_LENGTH(sizeof (struct ifinfomsg));
+ 		req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
+-		req.n.nlmsg_type = RTM_NEWLINK;
+-		req.ifi.ifi_family = AF_INET;
++		req.ifi.ifi_family = AF_UNSPEC;
+ 
+ 		/* macvlan settings */
+ 		linkinfo = NLMSG_TAIL(&req.n);
+@@ -268,118 +274,89 @@ netlink_link_add_vmac(vrrp_t *vrrp)
+ 		addattr_l(&req.n, sizeof(req), IFLA_LINK, &vrrp->ifp->base_ifp->ifindex, sizeof(uint32_t));
+ 		addattr_l(&req.n, sizeof(req), IFLA_IFNAME, vrrp->vmac_ifname, strlen(vrrp->vmac_ifname));
+ 		addattr_l(&req.n, sizeof(req), IFLA_ADDRESS, ll_addr, ETH_ALEN);
++	} else {
++		req.n.nlmsg_flags = NLM_F_REQUEST;
++		req.ifi.ifi_family = AF_UNSPEC;
++		req.ifi.ifi_index = (int)vrrp->ifp->ifindex;
++	}
+ 
+-		if (netlink_talk(&nl_cmd, &req.n) < 0) {
+-			log_message(LOG_INFO, "(%s): Unable to create VMAC interface %s"
+-					    , vrrp->iname, vrrp->vmac_ifname);
+-			return false;
+-		}
+-
+-		log_message(LOG_INFO, "(%s): Success creating VMAC interface %s"
+-				    , vrrp->iname, vrrp->vmac_ifname);
++	ifp->vmac = true;
+ 
+-		/*
+-		 * Update interface queue and vrrp instance interface binding.
+-		 */
+-		netlink_interface_lookup(vrrp->vmac_ifname);
+-		if (!ifp->ifindex)
+-			return false;
++	if (ifa_flags) {
++#if HAVE_DECL_IFA_FLAGS
++		addattr32(&req.n, sizeof(req), IFA_FLAGS, ifa_flags);
++#else
++		req.ifa.ifa_flags = ifa_flags;
++#endif
++	}
+ 
+-		/* If we do anything that might cause the interface state to change, we must
+-		 * read the reflected netlink messages to ensure that the link status doesn't
+-		 * get updated by out of date queued messages */
+-		kernel_netlink_poll();
++#if HAVE_DECL_IFLA_INET6_ADDR_GEN_MODE
++	if (vrrp->family == AF_INET && !vrrp->evip_add_ipv6)
++#endif
++	{
++		req.ifi.ifi_change |= IFF_UP;
++		req.ifi.ifi_flags |= IFF_UP;
+ 	}
+ 
+-//	if (ifp->base_ifp == ifp) {
+-//		ifp->base_ifp = vrrp->ifp;
+-//		vrrp->ifp = ifp;
+-//log_message(LOG_INFO, "Setting base_ifp for %s to %s", ifp->ifname, ifp->base_ifp->ifname);
+-//	}
+-//else
+-//log_message(LOG_INFO, "Already set base_ifp for %s to %s", ifp->ifname, ifp->base_ifp->ifname);
+-	ifp->vmac = true;
++char dump_buf[300];
++unsigned int i;
++int ofs = 0;
++unsigned char *buf= (unsigned char *)&req.n;
++for (i = 0; i < req.n.nlmsg_len; i++) {
++       if (i % 16 == 0)
++               ofs = sprintf(dump_buf, "0x%4.4x\t", i);
++       ofs += sprintf(dump_buf + ofs, "0x%2.2x ", buf[i]);
++       if (i % 16 == 15) {
++               log_message(LOG_INFO, "%s", dump_buf);
++               dump_buf[0] = '\0';
++       }
++}
++if (dump_buf[0])
++       log_message(LOG_INFO, "%s", dump_buf);
+ 
+-	if (!ifp->ifindex)
++	if (netlink_talk(&nl_cmd, &req.n) < 0) {
++		log_message(LOG_INFO, "(%s): Unable to create VMAC interface %s"
++				    , vrrp->iname, vrrp->vmac_ifname);
+ 		return false;
++	}
+ 
+-	if (vrrp->family == AF_INET) {
+-		/* Set the necessary kernel parameters to make macvlans work for us */
+-		if (create_interface)
+-			set_interface_parameters(ifp, ifp->base_ifp);
++	log_message(LOG_INFO, "(%s): Success creating VMAC interface %s"
++			    , vrrp->iname, vrrp->vmac_ifname);
+ 
+-		/* We don't want IPv6 running on the interface unless we have some IPv6
+-		 * eVIPs, so disable it if not needed */
+-		if (!vrrp->evip_add_ipv6)
+-			link_set_ipv6(ifp, false);
+-		else if (!create_interface) {
+-			/* If we didn't create the VMAC we don't know what state it is in */
+-			link_set_ipv6(ifp, true);
+-		}
+-	}
++	/* mark it UP ! */
++	__set_bit(VRRP_VMAC_UP_BIT, &vrrp->vmac_flags);
++
++	/* We need the interface index for IPv6 */
++	kernel_netlink_poll();
+ 
++	if (!ifp->ifindex)
++		return false;
++
++	// We don't want a link-local address auto assigned - see RFC5798 paragraph 7.4.
++	// If we have a sufficiently recent kernel, we can stop a link local address
++	// based on the MAC address being automatically assigned. If not, then we have
++	// to delete the generated address after bringing the interface up (see below).
+ 	if (vrrp->family == AF_INET6 || vrrp->evip_add_ipv6) {
+-		// We don't want a link-local address auto assigned - see RFC5798 paragraph 7.4.
+-		// If we have a sufficiently recent kernel, we can stop a link local address
+-		// based on the MAC address being automatically assigned. If not, then we have
+-		// to delete the generated address after bringing the interface up (see below).
+ #if HAVE_DECL_IFLA_INET6_ADDR_GEN_MODE
+-		memset(&req, 0, sizeof (req));
++		struct rtattr* spec;
++
+ 		req.n.nlmsg_len = NLMSG_LENGTH(sizeof (struct ifinfomsg));
+-		req.n.nlmsg_flags = NLM_F_REQUEST ;
+ 		req.n.nlmsg_type = RTM_NEWLINK;
++		req.n.nlmsg_flags = NLM_F_REQUEST;
+ 		req.ifi.ifi_family = AF_UNSPEC;
+ 		req.ifi.ifi_index = (int)vrrp->ifp->ifindex;
+ 
+-		u_char val = IN6_ADDR_GEN_MODE_NONE;
+-		struct rtattr* spec;
+-
+-		spec = NLMSG_TAIL(&req.n);
+-		addattr_l(&req.n, sizeof(req), IFLA_AF_SPEC, NULL,0);
+-		data = NLMSG_TAIL(&req.n);
+-		addattr_l(&req.n, sizeof(req), AF_INET6, NULL,0);
+-		addattr_l(&req.n, sizeof(req), IFLA_INET6_ADDR_GEN_MODE, &val, sizeof(val));
+-		data->rta_len = (unsigned short)((void *)NLMSG_TAIL(&req.n) - (void *)data);
+-		spec->rta_len = (unsigned short)((void *)NLMSG_TAIL(&req.n) - (void *)spec);
++		spec = addattr_nest(&req.n, sizeof(req), IFLA_AF_SPEC);
++		data = addattr_nest(&req.n, sizeof(req), AF_INET6);
++		addattr8(&req.n, sizeof(req), IFLA_INET6_ADDR_GEN_MODE, IN6_ADDR_GEN_MODE_NONE);
++		addattr_nest_end(&req.n, data);
++		addattr_nest_end(&req.n, spec);
+ 
+ 		if (netlink_talk(&nl_cmd, &req.n) < 0)
+-			log_message(LOG_INFO, "vmac: Error setting ADDR_GEN_MODE to NONE");
+-#endif
++			log_message(LOG_INFO, "(%s): Unable to set ADDR_GEN_MODE", vrrp->iname);
+ 
+-		if (vrrp->family == AF_INET6) {
+-			/* Add link-local address. If a source address has been specified, use it,
+-			 * else use link-local address from underlying interface to vmac if there is one,
+-			 * otherwise construct a link-local address based on underlying interface's
+-			 * MAC address.
+-			 * This is so that VRRP advertisements will be sent from a non-VIP address, but
+-			 * using the VRRP MAC address */
+-			ip_address_t ipaddress;
+-
+-			memset(&ipaddress, 0, sizeof(ipaddress));
+-
+-			ipaddress.ifp = ifp;
+-			if (vrrp->saddr.ss_family == AF_INET6)
+-				ipaddress.u.sin6_addr = ((struct sockaddr_in6*)&vrrp->saddr)->sin6_addr;
+-			else if (ifp->base_ifp->sin6_addr.s6_addr32[0])
+-				ipaddress.u.sin6_addr = ifp->base_ifp->sin6_addr;
+-			else
+-				make_link_local_address(&ipaddress.u.sin6_addr, ifp->base_ifp->hw_addr);
+-			ipaddress.ifa.ifa_family = AF_INET6;
+-			ipaddress.ifa.ifa_prefixlen = 64;
+-			ipaddress.ifa.ifa_index = vrrp->ifp->ifindex;
+-
+-			if (netlink_ipaddress(&ipaddress, IPADDRESS_ADD) != 1 && create_interface)
+-				log_message(LOG_INFO, "Adding link-local address to vmac failed");
+-		}
+-	}
+-
+-	/* bring it UP ! */
+-	__set_bit(VRRP_VMAC_UP_BIT, &vrrp->vmac_flags);
+-	netlink_link_up(vrrp);
+-	kernel_netlink_poll();
+-
+-#if !HAVE_DECL_IFLA_INET6_ADDR_GEN_MODE
+-	if (vrrp->family == AF_INET6 || vrrp->evip_add_ipv6) {
++		netlink_link_up(vrrp);
++#else
+ 		/* Delete the automatically created link-local address based on the
+ 		 * MAC address if we weren't able to configure the interface not to
+ 		 * create the address (see above).
+@@ -399,13 +376,55 @@ netlink_link_add_vmac(vrrp_t *vrrp)
+ 
+ 		if (netlink_ipaddress(&ipaddress, IPADDRESS_DEL) != 1 && create_interface)
+ 			log_message(LOG_INFO, "Deleting auto link-local address from vmac failed");
+-	}
+ #endif
+ 
+-	/* If we are adding a large number of interfaces, the netlink socket
+-	 * may run out of buffers if we don't receive the netlink messages
+-	 * as we progress */
+-	kernel_netlink_poll();
++		/* Update the interface state */
++		kernel_netlink_poll();
++	}
++
++	if (vrrp->family == AF_INET6) {
++		/* Add link-local address. If a source address has been specified, use it,
++		 * else use link-local address from underlying interface to vmac if there is one,
++		 * otherwise construct a link-local address based on underlying interface's
++		 * MAC address.
++		 * This is so that VRRP advertisements will be sent from a non-VIP address, but
++		 * using the VRRP MAC address */
++		ip_address_t ipaddress;
++
++		memset(&ipaddress, 0, sizeof(ipaddress));
++
++		ipaddress.ifp = ifp;
++		if (vrrp->saddr.ss_family == AF_INET6)
++			ipaddress.u.sin6_addr = ((struct sockaddr_in6*)&vrrp->saddr)->sin6_addr;
++		else if (ifp->base_ifp->sin6_addr.s6_addr32[0])
++			ipaddress.u.sin6_addr = ifp->base_ifp->sin6_addr;
++		else
++			make_link_local_address(&ipaddress.u.sin6_addr, ifp->base_ifp->hw_addr);
++		ipaddress.ifa.ifa_family = AF_INET6;
++		ipaddress.ifa.ifa_prefixlen = 64;
++		ipaddress.ifa.ifa_index = vrrp->ifp->ifindex;
++
++		if (netlink_ipaddress(&ipaddress, IPADDRESS_ADD) != 1 && create_interface)
++			log_message(LOG_INFO, "Adding link-local address to vmac failed");
++
++		/* If we are adding a large number of interfaces, the netlink socket
++		 * may run out of buffers if we don't receive the netlink messages
++		 * as we progress */
++//		kernel_netlink_poll();
++	} else {
++		/* Set the necessary kernel parameters to make macvlans work for us */
++		if (create_interface)
++			set_interface_parameters(ifp, ifp->base_ifp);
++
++		/* We don't want IPv6 running on the interface unless we have some IPv6
++		 * eVIPs, so disable it if not needed */
++		if (!vrrp->evip_add_ipv6)
++			link_set_ipv6(ifp, false);
++		else if (!create_interface) {
++			/* If we didn't create the VMAC we don't know what state it is in */
++			link_set_ipv6(ifp, true);
++		}
++	}
+ 
+ 	return true;
+ }
+diff --git a/lib/memory.h b/lib/memory.h
+index 2e8357d7..38e1450d 100644
+--- a/lib/memory.h
++++ b/lib/memory.h
+@@ -37,7 +37,7 @@
+ /* Local defines */
+ #ifdef _MEM_CHECK_
+ 
+-#define MAX_ALLOC_LIST 2048*4
++#define MAX_ALLOC_LIST 2048*4*4
+ 
+ #define MALLOC(n)    ( keepalived_malloc((n), \
+ 		      (__FILE__), (char *)(__FUNCTION__), (__LINE__)) )
