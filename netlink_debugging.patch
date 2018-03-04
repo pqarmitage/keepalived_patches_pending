@@ -1,0 +1,126 @@
+diff --git a/keepalived/core/keepalived_netlink.c b/keepalived/core/keepalived_netlink.c
+index 7e25e8c1..37278e59 100644
+--- a/keepalived/core/keepalived_netlink.c
++++ b/keepalived/core/keepalived_netlink.c
+@@ -951,8 +951,10 @@ netlink_parse_info(int (*filter) (struct sockaddr_nl *, struct nlmsghdr *),
+ 			return -1;
+ 		}
+ 
++log_message(LOG_INFO, "Received netlink message on socket %d size %ld", nl->fd, status);
+ 		for (h = (struct nlmsghdr *) buf; NLMSG_OK(h, (size_t)status);
+ 		     h = NLMSG_NEXT(h, status)) {
++log_message(LOG_INFO, "nlmsg_type 0x%04x, seq 0x%x", h->nlmsg_type, h->nlmsg_seq);
+ 			/* Finish off reading. */
+ 			if (h->nlmsg_type == NLMSG_DONE)
+ 				return ret;
+@@ -1004,6 +1006,15 @@ netlink_parse_info(int (*filter) (struct sockaddr_nl *, struct nlmsghdr *),
+ 				return -1;
+ 			}
+ 
++log_message(LOG_INFO, "net message %s (%d), %s socket, pid 0x%x, our cmd_pid 0x%x, nlmsg_flags 0x%x, multi 0x%x, read_all %d",
++		h->nlmsg_type == RTM_NEWROUTE ? "new route" :
++		h->nlmsg_type == RTM_DELROUTE ? "del route" :
++		h->nlmsg_type == RTM_NEWADDR ? "new address" :
++		h->nlmsg_type == RTM_DELADDR ? "del address" :
++		h->nlmsg_type == RTM_NEWLINK ? "new link" :
++		h->nlmsg_type == RTM_DELLINK ? "del link" :
++		"unknown", h->nlmsg_type, nl == &nl_kernel ? "kernel" : "cmd", h->nlmsg_pid, nl_cmd.nl_pid, h->nlmsg_flags, NLM_F_MULTI, read_all);
++
+ #ifdef _WITH_VRRP_
+ 			/* Skip unsolicited messages from cmd channel */
+ 			if (
+@@ -1014,6 +1025,28 @@ netlink_parse_info(int (*filter) (struct sockaddr_nl *, struct nlmsghdr *),
+ 				continue;
+ #endif
+ 
++	if (h->nlmsg_type == RTM_NEWLINK) {
++	struct ifinfomsg *ifi;
++	struct rtattr *tb[IFLA_MAX + 1];
++	size_t len;
++	char *name;
++
++	ifi = NLMSG_DATA(h);
++
++	if (h->nlmsg_len < NLMSG_LENGTH(sizeof (struct ifinfomsg)))
++		return -1;
++	len = h->nlmsg_len - NLMSG_LENGTH(sizeof (struct ifinfomsg));
++
++	/* Interface name lookup */
++	memset(tb, 0, sizeof (tb));
++	parse_rtattr(tb, IFLA_MAX, IFLA_RTA(ifi), len);
++
++	if (tb[IFLA_IFNAME] == NULL)
++		return -1;
++	name = (char *) RTA_DATA(tb[IFLA_IFNAME]);
++log_message(LOG_INFO, "New interface %s, index %d, flags 0x%x", name, ifi->ifi_index, ifi->ifi_flags);
++	}
++
+ 			error = (*filter) (&snl, h);
+ 			if (error < 0) {
+ 				log_message(LOG_INFO, "Netlink: filter function error");
+@@ -1046,6 +1079,57 @@ netlink_talk_filter(__attribute__((unused)) struct sockaddr_nl *snl, struct nlms
+ {
+ 	log_message(LOG_INFO, "Netlink: ignoring message type 0x%04x", h->nlmsg_type);
+ 
++	struct ifaddrmsg *ifa;
++	struct rtattr *tb[IFA_MAX + 1];
++#ifdef _WITH_VRRP_
++	interface_t *ifp;
++#endif
++	size_t len;
++	union {
++		void *addr;
++		struct in_addr *in;
++		struct in6_addr *in6;
++	} addr;
++#ifdef _WITH_VRRP_
++	char addr_str[INET6_ADDRSTRLEN];
++#endif
++
++	if (h->nlmsg_type != RTM_NEWADDR && h->nlmsg_type != RTM_DELADDR)
++		return 0;
++
++	if (h->nlmsg_len < NLMSG_LENGTH(sizeof (struct ifaddrmsg)))
++		return -1;
++
++	ifa = NLMSG_DATA(h);
++
++	/* Only IPv4 and IPv6 are valid for us */
++	if (ifa->ifa_family != AF_INET && ifa->ifa_family != AF_INET6)
++		return 0;
++
++	len = h->nlmsg_len - NLMSG_LENGTH(sizeof (struct ifaddrmsg));
++
++	memset(tb, 0, sizeof (tb));
++	parse_rtattr(tb, IFA_MAX, IFA_RTA(ifa), len);
++
++	if (tb[IFA_LOCAL] == NULL)
++		tb[IFA_LOCAL] = tb[IFA_ADDRESS];
++	if (tb[IFA_ADDRESS] == NULL)
++		tb[IFA_ADDRESS] = tb[IFA_LOCAL];
++
++	/* local interface address */
++	addr.addr = (tb[IFA_LOCAL] ? RTA_DATA(tb[IFA_LOCAL]) : NULL);
++
++	if (addr.addr == NULL)
++		return -1;
++
++	ifp = if_get_by_ifindex(ifa->ifa_index);
++	if (!ifp)
++		return 0;
++
++	inet_ntop(ifa->ifa_family, addr.addr, addr_str, sizeof(addr_str));
++	log_message(LOG_INFO, "Talk filter %sssigned address %s for interface %s", h->nlmsg_type == RTM_NEWADDR ? "A" : "Dea"
++			    , addr_str, ifp->ifname);
++
+ 	return 0;
+ }
+ 
+@@ -1088,6 +1172,7 @@ netlink_talk(nl_handle_t *nl, struct nlmsghdr *n)
+ 		       strerror(errno));
+ 		return -1;
+ 	}
++log_message(LOG_INFO, "Send netlink msg type %d on socket %d", n->nlmsg_type, nl->fd);
+ 
+ 	status = netlink_parse_info(netlink_talk_filter, nl, n, false);
+ 
