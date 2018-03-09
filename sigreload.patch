@@ -1,0 +1,66 @@
+diff --git a/keepalived/bfd/bfd_daemon.c b/keepalived/bfd/bfd_daemon.c
+index 33743411..105d96a9 100644
+--- a/keepalived/bfd/bfd_daemon.c
++++ b/keepalived/bfd/bfd_daemon.c
+@@ -148,7 +148,7 @@ start_bfd(void)
+ 
+ /* Reload handler */
+ static void
+-sighup_bfd(__attribute__ ((unused)) void *v,
++sigreload_bfd(__attribute__ ((unused)) void *v,
+ 	   __attribute__ ((unused)) int sig)
+ {
+ 	thread_add_event(master, reload_bfd_thread, NULL, 0);
+@@ -168,7 +168,7 @@ static void
+ bfd_signal_init(void)
+ {
+ 	signal_handler_init();
+-	signal_set(SIGHUP, sighup_bfd, NULL);
++	signal_set(SIGHUP, sigreload_bfd, NULL);
+ 	signal_set(SIGINT, sigend_bfd, NULL);
+ 	signal_set(SIGTERM, sigend_bfd, NULL);
+ 	signal_ignore(SIGPIPE);
+diff --git a/keepalived/check/check_daemon.c b/keepalived/check/check_daemon.c
+index 19c056a5..ccda3f2e 100644
+--- a/keepalived/check/check_daemon.c
++++ b/keepalived/check/check_daemon.c
+@@ -263,7 +263,7 @@ reload_check_thread(__attribute__((unused)) thread_t * thread)
+ }
+ 
+ static void
+-sighup_check(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
++sigreload_check(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
+ {
+ 	thread_add_event(master, reload_check_thread, NULL, 0);
+ }
+@@ -281,7 +281,7 @@ static void
+ check_signal_init(void)
+ {
+ 	signal_handler_child_init();
+-	signal_set(SIGHUP, sighup_check, NULL);
++	signal_set(SIGHUP, sigreload_check, NULL);
+ 	signal_set(SIGINT, sigend_check, NULL);
+ 	signal_set(SIGTERM, sigend_check, NULL);
+ 	signal_ignore(SIGPIPE);
+diff --git a/keepalived/vrrp/vrrp_daemon.c b/keepalived/vrrp/vrrp_daemon.c
+index dd228b46..dda1d09c 100644
+--- a/keepalived/vrrp/vrrp_daemon.c
++++ b/keepalived/vrrp/vrrp_daemon.c
+@@ -404,7 +404,7 @@ send_reload_advert_thread(thread_t *thread)
+ }
+ 
+ static void
+-sighup_vrrp(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
++sigreload_vrrp(__attribute__((unused)) void *v, __attribute__((unused)) int sig)
+ {
+ 	element e;
+ 	vrrp_t *vrrp;
+@@ -472,7 +472,7 @@ static void
+ vrrp_signal_init(void)
+ {
+ 	signal_handler_child_init();
+-	signal_set(SIGHUP, sighup_vrrp, NULL);
++	signal_set(SIGHUP, sigreload_vrrp, NULL);
+ 	signal_set(SIGINT, sigend_vrrp, NULL);
+ 	signal_set(SIGTERM, sigend_vrrp, NULL);
+ 	signal_set(SIGUSR1, sigusr1_vrrp, NULL);
