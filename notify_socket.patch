@@ -1,0 +1,79 @@
+From 59cd6b931f138bf8cf308466965101a576e0b63e Mon Sep 17 00:00:00 2001
+From: Barak Adam <badam@mrv.com>
+Date: Sun, 18 Feb 2018 12:38:49 +0200
+Subject: [PATCH] Change VRRP state change notification
+
+Description:
+============
+Upon VIF state change, send notification by writing a message to socket
+instead of forking keepalived and call an external script or binary
+by the child process.
+With forking not all of child processes were closed as expected.
+---
+ lib/notify.c | 37 +++++++++++++++++--------------------
+ 1 file changed, 17 insertions(+), 20 deletions(-)
+
+diff --git a/lib/notify.c b/lib/notify.c
+index fb0c945..ce74dae 100644
+--- a/lib/notify.c
++++ b/lib/notify.c
+@@ -32,6 +32,7 @@
+ #include <sys/types.h>
+ #include <string.h>
+ #include <sys/stat.h>
++#include <sys/un.h>
+ #include <pwd.h>
+ #include <limits.h>
+ #include <stdlib.h>
+@@ -239,32 +240,28 @@ notify_fifo_exec(thread_master_t *m, int (*func) (thread_t *), void *arg, const
+ int
+ notify_exec(const notify_script_t *script)
+ {
+-	pid_t pid;
++  struct sockaddr_un address = {};
+ 
+-	if (log_file_name)
+-		flush_log_file();
+-
+-	pid = fork();
+-
+-	/* In case of fork is error. */
+-	if (pid < 0) {
+-		log_message(LOG_INFO, "Failed fork process");
+-		return -1;
+-	}
++  int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
++  if (sockfd < 0) {
++    syslog(LOG_ERR, "can't open socket\n");
++    return -1;
++  }
+ 
+-	/* In case of this is parent process */
+-	if (pid)
+-		return 0;
++  address.sun_family = AF_UNIX;
++  strcpy(address.sun_path, "/tmp/vrrp_notify_sock");
+ 
+-#ifdef _MEM_CHECK_
+-	skip_mem_dump();
+-#endif
++  if(connect(sockfd, (struct sockaddr *)&address, sizeof(address)) < 0) {
++    syslog(LOG_ERR, "can't connect socket\n");
++    close(sockfd);
++    return -1;
++  }
+ 
+-	script_setup();
++  write(sockfd, script->name, strlen(script->name));
+ 
+-	system_call(script->name, script->uid, script->gid);
++  close(sockfd);
+ 
+-	exit(0);
++  return 0;
+ }
+ 
+ int
+-- 
+2.7.4
+

@@ -1,0 +1,1777 @@
+--- a/genhash/http.c	2018-03-09 23:37:05.276215180 +0000
++++ b/genhash/http.c	2018-03-09 23:43:01.153268121 +0000
+@@ -241,10 +241,10 @@ http_read_thread(thread_t * thread)
+ 	ssize_t r = 0;
+ 
+ 	/* Handle read timeout */
+-	if (thread->type == THREAD_READ_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_READ_TIMEOUT) {
+ 		exit_code = 1;
+ 		epilog(thread);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* read the HTTP stream */
+@@ -267,7 +267,7 @@ http_read_thread(thread_t * thread)
+ 			    strerror(errno));
+ 			exit_code = 1;
+ 			epilog(thread);
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 		}
+ 
+ 		/* All the HTTP stream has been parsed */
+@@ -284,7 +284,7 @@ http_read_thread(thread_t * thread)
+ 				thread->u.fd, HTTP_CNX_TIMEOUT);
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /*
+@@ -297,10 +297,10 @@ http_response_thread(thread_t * thread)
+ 	SOCK *sock_obj = THREAD_ARG(thread);
+ 
+ 	/* Handle read timeout */
+-	if (thread->type == THREAD_READ_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_READ_TIMEOUT) {
+ 		exit_code = 1;
+ 		epilog(thread);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* Allocate & clean the get buffer */
+@@ -319,7 +319,7 @@ http_response_thread(thread_t * thread)
+ 	else
+ 		thread_add_read(thread->master, http_read_thread, sock_obj,
+ 				thread->u.fd, HTTP_CNX_TIMEOUT);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /* remote Web server is connected, send it the get url query.  */
+@@ -333,10 +333,10 @@ http_request_thread(thread_t * thread)
+ 	int ret;
+ 
+ 	/* Handle read timeout */
+-	if (thread->type == THREAD_WRITE_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_WRITE_TIMEOUT) {
+ 		exit_code = 1;
+ 		epilog(thread);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* Allocate & clean the GET string */
+@@ -378,11 +378,11 @@ http_request_thread(thread_t * thread)
+ 			ntohs(req->addr_port));
+ 		exit_code = 1;
+ 		epilog(thread);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* Register read timeouted thread */
+ 	thread_add_read(thread->master, http_response_thread, sock_obj,
+ 			sock_obj->fd, HTTP_CNX_TIMEOUT);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+--- a/genhash/layer4.c	2018-03-09 23:37:05.343214254 +0000
++++ b/genhash/layer4.c	2018-03-09 23:43:01.155268093 +0000
+@@ -104,7 +104,7 @@ tcp_socket_state(thread_t * thread, thre
+ 	timeval_t timer_min;
+ 
+ 	/* Handle connection timeout */
+-	if (thread->type == THREAD_WRITE_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_WRITE_TIMEOUT) {
+ 		DBG("TCP connection timeout to [%s]:%d.\n",
+ 		    req->ipaddress, ntohs(req->addr_port));
+ 		close(thread->u.fd);
+@@ -182,14 +182,14 @@ tcp_check_thread(thread_t * thread)
+ 		DBG("Error connecting server [%s]:%d.\n",
+ 		    req->ipaddress, ntohs(req->addr_port));
+ 		thread_add_terminate_event(thread->master);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 		break;
+ 
+ 	case connect_timeout:
+ 		DBG("Timeout connecting server [%s]:%d.\n",
+ 		    req->ipaddress, ntohs(req->addr_port));
+ 		thread_add_terminate_event(thread->master);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 		break;
+ 
+ 	case connect_success:{
+@@ -210,13 +210,13 @@ tcp_check_thread(thread_t * thread)
+ 					ssl_printerr(SSL_get_error
+ 						     (sock_obj->ssl, ret));
+ 				sock_obj->status = connect_error;
+-				return false;
++				return THREAD_DONT_REQUEUE;
+ 			}
+ 		}
+ 		break;
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ thread_ret_t
+@@ -231,7 +231,7 @@ tcp_connect_thread(thread_t * thread)
+ #endif
+ 							     , IPPROTO_TCP)) == -1) {
+ 		DBG("WEB connection fail to create socket.\n");
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ #ifndef SOCK_CLOEXEC
+@@ -243,5 +243,5 @@ tcp_connect_thread(thread_t * thread)
+ 	/* handle tcp connection status & register check worker thread */
+ 	tcp_connection_state(sock_obj->fd, sock_obj->status, thread, tcp_check_thread,
+ 			     HTTP_CNX_TIMEOUT);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+--- a/genhash/ssl.c	2018-03-09 23:37:05.349214171 +0000
++++ b/genhash/ssl.c	2018-03-09 23:43:01.155268093 +0000
+@@ -144,10 +144,10 @@ ssl_read_thread(thread_t * thread)
+ 	int error;
+ 
+ 	/* Handle read timeout */
+-	if (thread->type == THREAD_READ_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_READ_TIMEOUT) {
+ 		exit_code = 1;
+ 		epilog(thread);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/*
+@@ -186,7 +186,7 @@ read_stream:
+ 		/* Handle response stream */
+ 		if (error != SSL_ERROR_NONE) {
+ 			finalize(thread);
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 		}
+ 	} else if (r > 0 && error == 0) {
+ 
+@@ -200,5 +200,5 @@ read_stream:
+ 		goto read_stream;
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+--- a/keepalived/bfd/bfd_daemon.c	2018-03-09 23:37:05.365213950 +0000
++++ b/keepalived/bfd/bfd_daemon.c	2018-03-09 23:43:01.155268093 +0000
+@@ -211,7 +211,7 @@ reload_bfd_thread(__attribute__((unused)
+ 	set_time_now();
+ 	log_message(LOG_INFO, "Reload finished in %li usec", -timer_tol(timer_sub_now(timer)));
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ #ifndef _DEBUG_
+@@ -225,10 +225,10 @@ bfd_respawn_thread(thread_t * thread)
+ 	pid = THREAD_CHILD_PID(thread);
+ 
+ 	/* Restart respawning thread */
+-	if (thread->type == THREAD_CHILD_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_CHILD_TIMEOUT) {
+ 		thread_add_child(master, bfd_respawn_thread, NULL,
+ 				 pid, RESPAWN_TIMER);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* We catch a SIGCHLD, handle it */
+@@ -241,7 +241,7 @@ bfd_respawn_thread(thread_t * thread)
+ 			    pid);
+ 		raise(SIGTERM);
+ 	}
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ #endif
+ 
+--- a/keepalived/bfd/bfd_scheduler.c	2018-03-09 23:37:05.381213729 +0000
++++ b/keepalived/bfd/bfd_scheduler.c	2018-03-09 23:43:01.156268079 +0000
+@@ -93,7 +93,7 @@ bfd_sender_thread(thread_t *thread)
+ 	if (thread->type != THREAD_EVENT && !BFD_ISADMINDOWN(bfd))
+ 		bfd_sender_schedule(bfd);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /* Schedules bfd_sender_thread to run in local_tx_intv minus applied jitter */
+@@ -248,7 +248,7 @@ bfd_expire_thread(thread_t *thread)
+ 	bfd->remote_discr = 0;
+ 	bfd_state_down(bfd, BFD_DIAG_EXPIRED);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /* Schedules bfd_expire_thread to run in local_detect_time */
+@@ -359,7 +359,7 @@ bfd_reset_thread(thread_t *thread)
+ 
+ 	bfd_reset_state(bfd);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /* Schedules bfd_reset_thread to run in local_detect_time */
+@@ -882,7 +882,7 @@ bfd_receiver_thread(thread_t *thread)
+ 	data->thread_in = NULL;
+ 
+ 	/* Ignore THREAD_READ_TIMEOUT */
+-	if (thread->type == THREAD_READY_FD) {
++	if (thread->reason == THREAD_REASON_READY_FD) {
+ 		ret = bfd_receive_packet(&pkt, fd, bfd_buffer, BFD_BUFFER_SIZE);
+ 		if (!ret)
+ 			bfd_handle_packet(&pkt);
+@@ -892,7 +892,7 @@ bfd_receiver_thread(thread_t *thread)
+ 	    thread_add_read(thread->master, bfd_receiver_thread, data,
+ 			    fd, TIMER_NEVER);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /*
+@@ -1129,5 +1129,5 @@ bfd_dispatcher_init(thread_t *thread)
+ 
+ 	bfd_register_workers(data);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+--- a/keepalived/check/check_bfd.c	2018-03-09 23:37:05.394213549 +0000
++++ b/keepalived/check/check_bfd.c	2018-03-09 23:43:01.157268065 +0000
+@@ -283,13 +283,13 @@ bfd_check_thread(thread_t * thread)
+ 	bfd_thread = thread_add_read(master, bfd_check_thread, NULL,
+ 				     thread->u.fd, TIMER_NEVER);
+ 
+-	if (thread->type != THREAD_READY_FD)
+-		return false;
++	if (thread->reason != THREAD_REASON_READY_FD)
++		return THREAD_DONT_REQUEUE;
+ 
+ 	while (read(thread->u.fd, &evt, sizeof(bfd_event_t)) != -1)
+ 		bfd_check_handle_event(&evt);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ void
+--- a/keepalived/check/check_daemon.c	2018-03-09 23:37:05.394213549 +0000
++++ b/keepalived/check/check_daemon.c	2018-03-09 23:43:01.157268065 +0000
+@@ -304,7 +304,7 @@ check_respawn_thread(thread_t * thread)
+ 	pid = THREAD_CHILD_PID(thread);
+ 
+ 	/* Restart respawning thread */
+-	if (thread->type == THREAD_CHILD_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_CHILD_TIMEOUT) {
+ 		thread_add_child(master, check_respawn_thread, NULL,
+ 				 pid, RESPAWN_TIMER);
+ 		return 0;
+--- a/keepalived/check/check_dns.c	2018-03-09 23:37:05.395213536 +0000
++++ b/keepalived/check/check_dns.c	2018-03-09 23:43:01.158268051 +0000
+@@ -163,9 +163,9 @@ dns_recv_thread(thread_t * thread)
+ 	checker_t *checker = THREAD_ARG(thread);
+ 	dns_check_t *dns_check = CHECKER_ARG(checker);
+ 
+-	if (thread->type == THREAD_READ_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_READ_TIMEOUT) {
+ 		dns_final(thread, 1, "read timeout from socket.");
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	timeout = timer_long(thread->sands) - timer_long(time_now);
+@@ -175,17 +175,17 @@ dns_recv_thread(thread_t * thread)
+ 		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+ 			thread_add_read(thread->master, dns_recv_thread,
+ 					checker, thread->u.fd, timeout);
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 		}
+ 		dns_final(thread, 1, "failed to read socket. %s.", strerror(errno));
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	if (ret < (ssize_t) sizeof (r_header)) {
+ 		DNS_DBG("too small message. (%d bytes)", ret);
+ 		thread_add_read(thread->master, dns_recv_thread, checker,
+ 				thread->u.fd, timeout);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	s_header = (dns_header_t *) dns_check->sbuf;
+@@ -196,7 +196,7 @@ dns_recv_thread(thread_t * thread)
+ 			ntohs(s_header->id), ntohs(r_header->id));
+ 		thread_add_read(thread->master, dns_recv_thread, checker,
+ 				thread->u.fd, timeout);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	flags = ntohs(r_header->flags);
+@@ -205,18 +205,18 @@ dns_recv_thread(thread_t * thread)
+ 		DNS_DBG("receive query message?");
+ 		thread_add_read(thread->master, dns_recv_thread, checker,
+ 				thread->u.fd, timeout);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	if ((rcode = DNS_RC(flags)) != 0) {
+ 		dns_final(thread, 1, "read error occurred. (rcode = %d)", rcode);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* success */
+ 	dns_final(thread, 0, NULL);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ #define APPEND16(x, y) do { \
+@@ -278,9 +278,9 @@ dns_send_thread(thread_t * thread)
+ 	checker_t *checker = THREAD_ARG(thread);
+ 	dns_check_t *dns_check = CHECKER_ARG(checker);
+ 
+-	if (thread->type == THREAD_WRITE_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_WRITE_TIMEOUT) {
+ 		dns_final(thread, 1, "write timeout to socket.");
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	timeout = timer_long(thread->sands) - timer_long(time_now);
+@@ -290,21 +290,21 @@ dns_send_thread(thread_t * thread)
+ 		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+ 			thread_add_write(thread->master, dns_send_thread,
+ 					 checker, thread->u.fd, timeout);
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 		}
+ 		dns_final(thread, 1, "failed to write socket.");
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	if (ret != (ssize_t) dns_check->slen) {
+ 		dns_final(thread, 1, "failed to write all of the datagram.");
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	thread_add_read(thread->master, dns_recv_thread, checker, thread->u.fd,
+ 			timeout);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static thread_ret_t
+@@ -336,7 +336,7 @@ dns_check_thread(thread_t * thread)
+ 		break;
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static thread_ret_t
+@@ -350,7 +350,7 @@ dns_connect_thread(thread_t * thread)
+ 	if (!checker->enabled) {
+ 		thread_add_timer(thread->master, dns_connect_thread, checker,
+ 				 checker->delay_loop);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	if ((fd = socket(co->dst.ss_family, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, IPPROTO_UDP)) == -1) {
+@@ -358,7 +358,7 @@ dns_connect_thread(thread_t * thread)
+ 				"failed to create socket. Rescheduling.");
+ 		thread_add_timer(thread->master, dns_connect_thread, checker,
+ 				 checker->delay_loop);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ #if !HAVE_DECL_SOCK_NONBLOCK
+@@ -386,7 +386,7 @@ dns_connect_thread(thread_t * thread)
+ 				 checker->delay_loop);
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static void
+--- a/keepalived/check/check_http.c	2018-03-09 23:37:05.396213522 +0000
++++ b/keepalived/check/check_http.c	2018-03-09 23:43:01.159268037 +0000
+@@ -565,9 +565,9 @@ http_read_thread(thread_t * thread)
+ 	ssize_t r = 0;
+ 
+ 	/* Handle read timeout */
+-	if (thread->type == THREAD_READ_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_READ_TIMEOUT) {
+ 		timeout_epilog(thread, "Timeout HTTP read");
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* read the HTTP stream */
+@@ -581,7 +581,7 @@ http_read_thread(thread_t * thread)
+ 				    , strerror(errno));
+ 		thread_add_read(thread->master, http_read_thread, checker,
+ 				thread->u.fd, timeout);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	if (r == -1 || r == 0) {	/* -1:error , 0:EOF */
+@@ -593,7 +593,7 @@ http_read_thread(thread_t * thread)
+ 		if (r == -1) {
+ 			/* We have encountered a real read error */
+ 			timeout_epilog(thread, "Read error with");
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 		}
+ 
+ 		/* Handle response stream */
+@@ -612,7 +612,7 @@ http_read_thread(thread_t * thread)
+ 				thread->u.fd, timeout);
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /*
+@@ -629,9 +629,9 @@ http_response_thread(thread_t * thread)
+ 	unsigned timeout = checker->co->connection_to;
+ 
+ 	/* Handle read timeout */
+-	if (thread->type == THREAD_READ_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_READ_TIMEOUT) {
+ 		timeout_epilog(thread, "Timeout WEB read");
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* Allocate & clean the get buffer */
+@@ -649,7 +649,7 @@ http_response_thread(thread_t * thread)
+ 	else
+ 		thread_add_read(thread->master, http_read_thread, checker,
+ 				thread->u.fd, timeout);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /* remote Web server is connected, send it the get url query.  */
+@@ -669,9 +669,9 @@ http_request_thread(thread_t * thread)
+ 	int ret = 0;
+ 
+ 	/* Handle write timeout */
+-	if (thread->type == THREAD_WRITE_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_WRITE_TIMEOUT) {
+ 		timeout_epilog(thread, "Timeout WEB write");
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* Allocate & clean the GET string */
+@@ -722,13 +722,13 @@ http_request_thread(thread_t * thread)
+ 
+ 	if (!ret) {
+ 		timeout_epilog(thread, "Cannot send get request to");
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* Register read timeouted thread */
+ 	thread_add_read(thread->master, http_response_thread, checker,
+ 			thread->u.fd, timeout);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /* WEB checkers threads */
+@@ -750,12 +750,12 @@ http_check_thread(thread_t * thread)
+ 	switch (status) {
+ 	case connect_error:
+ 		timeout_epilog(thread, "Error connecting");
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 		break;
+ 
+ 	case connect_timeout:
+ 		timeout_epilog(thread, "Timeout connecting");
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 		break;
+ 
+ 	case connect_success:
+@@ -767,12 +767,12 @@ http_check_thread(thread_t * thread)
+ 
+ 		if (http_get_check->proto == PROTO_SSL) {
+ 			timeout = timer_long(thread->sands) - timer_long(time_now);
+-			if (thread->type != THREAD_WRITE_TIMEOUT &&
+-			    thread->type != THREAD_READ_TIMEOUT)
++			if (thread->reason != THREAD_REASON_WRITE_TIMEOUT &&
++			    thread->reason != THREAD_REASON_READ_TIMEOUT)
+ 				ret = ssl_connect(thread, new_req);
+ 			else {
+ 				timeout_epilog(thread, "Timeout connecting");
+-				return false;
++				return THREAD_DONT_REQUEUE;
+ 			}
+ 
+ 			if (ret == -1) {
+@@ -813,12 +813,12 @@ http_check_thread(thread_t * thread)
+ #endif
+ 			timeout_epilog(thread, "SSL handshake/communication error"
+ 						 " connecting to");
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 		}
+ 		break;
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static thread_ret_t
+@@ -838,14 +838,14 @@ http_connect_thread(thread_t * thread)
+ 	if (!checker->enabled) {
+ 		thread_add_timer(thread->master, http_connect_thread, checker,
+ 				 checker->delay_loop);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* if there are no URLs in list, enable server w/o checking */
+ 	fetched_url = fetch_next_url(http_get_check);
+ 	if (!fetched_url) {
+ 		epilog(thread, REGISTER_CHECKER_NEW, 1, 0);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* Create the socket */
+@@ -854,7 +854,7 @@ http_connect_thread(thread_t * thread)
+ 		thread_add_timer(thread->master, http_connect_thread, checker,
+ 				checker->delay_loop);
+ 
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ #if !HAVE_DECL_SOCK_NONBLOCK
+@@ -878,7 +878,7 @@ http_connect_thread(thread_t * thread)
+ 				checker->delay_loop);
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ #ifdef _TIMER_DEBUG_
+--- a/keepalived/check/check_misc.c	2018-03-09 23:37:05.397213508 +0000
++++ b/keepalived/check/check_misc.c	2018-03-09 23:43:01.159268037 +0000
+@@ -294,7 +294,7 @@ misc_check_thread(thread_t * thread)
+ 		/* Register next timer checker */
+ 		thread_add_timer(thread->master, misc_check_thread, checker,
+ 				 checker->delay_loop);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* Execute the script in a child process. Parent returns, child doesn't */
+@@ -306,7 +306,7 @@ misc_check_thread(thread_t * thread)
+ 		misck_checker->state = SCRIPT_STATE_RUNNING;
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static thread_ret_t
+@@ -327,7 +327,7 @@ misc_check_child_thread(thread_t * threa
+ 	checker = THREAD_ARG(thread);
+ 	misck_checker = CHECKER_ARG(checker);
+ 
+-	if (thread->type == THREAD_CHILD_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_CHILD_TIMEOUT) {
+ 		pid = THREAD_CHILD_PID(thread);
+ 
+ 		if (misck_checker->state == SCRIPT_STATE_RUNNING) {
+@@ -357,7 +357,7 @@ misc_check_child_thread(thread_t * threa
+ 		if (timeout)
+ 			thread_add_child(thread->master, misc_check_child_thread, checker, pid, timeout * TIMER_HZ);
+ 
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	wait_status = THREAD_CHILD_STATUS(thread);
+@@ -464,7 +464,7 @@ misc_check_child_thread(thread_t * threa
+ 
+ 	misck_checker->state = SCRIPT_STATE_IDLE;
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ #ifdef _TIMER_DEBUG_
+--- a/keepalived/check/check_smtp.c	2018-03-09 23:37:05.397213508 +0000
++++ b/keepalived/check/check_smtp.c	2018-03-09 23:43:01.160268023 +0000
+@@ -387,10 +387,10 @@ smtp_get_line_cb(thread_t *thread)
+ 	ssize_t r;
+ 
+ 	/* Handle read timeout */
+-	if (thread->type == THREAD_READ_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_READ_TIMEOUT) {
+ 		smtp_final(thread, 1, "Read timeout from server %s"
+ 				    , FMT_SMTP_RS(smtp_host));
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* wrap the buffer, if full, by clearing it */
+@@ -408,7 +408,7 @@ smtp_get_line_cb(thread_t *thread)
+ 	if (r == -1 && (errno == EAGAIN || errno == EINTR)) {
+ 		thread_add_read(thread->master, smtp_get_line_cb, checker,
+ 				thread->u.fd, smtp_host->connection_to);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	} else if (r > 0)
+ 		smtp_checker->buff_ctr += (size_t)r;
+ 
+@@ -423,7 +423,7 @@ smtp_get_line_cb(thread_t *thread)
+ 
+ 			(smtp_checker->buff_cb)(thread);
+ 
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 		}
+ 	}
+ 
+@@ -434,7 +434,7 @@ smtp_get_line_cb(thread_t *thread)
+ 	if (r <= 0) {
+ 		smtp_final(thread, 1, "Read failure from server %s"
+ 				     , FMT_SMTP_RS(smtp_host));
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/*
+@@ -444,7 +444,7 @@ smtp_get_line_cb(thread_t *thread)
+ 	 */
+ 	thread_add_read(thread->master, smtp_get_line_cb, checker,
+ 			thread->u.fd, smtp_host->connection_to);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /*
+@@ -491,10 +491,10 @@ smtp_put_line_cb(thread_t *thread)
+ 
+ 
+ 	/* Handle read timeout */
+-	if (thread->type == THREAD_WRITE_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_WRITE_TIMEOUT) {
+ 		smtp_final(thread, 1, "Write timeout to server %s"
+ 				     , FMT_SMTP_RS(smtp_host));
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* write the data */
+@@ -503,7 +503,7 @@ smtp_put_line_cb(thread_t *thread)
+ 	if (w == -1 && (errno == EAGAIN || errno == EINTR)) {
+ 		thread_add_write(thread->master, smtp_put_line_cb, checker,
+ 				 thread->u.fd, smtp_host->connection_to);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	DBG("SMTP_CHECK %s > %s"
+@@ -517,12 +517,12 @@ smtp_put_line_cb(thread_t *thread)
+ 	if (w <= 0) {
+ 		smtp_final(thread, 1, "Write failure to server %s"
+ 				     , FMT_SMTP_RS(smtp_host));
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* Execute the callback */
+ 	(smtp_checker->buff_cb)(thread);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /*
+@@ -679,13 +679,13 @@ smtp_check_thread(thread_t *thread)
+ 		case connect_error:
+ 			smtp_final(thread, 1, "Error connecting to server %s"
+ 					     , FMT_SMTP_RS(smtp_host));
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 			break;
+ 
+ 		case connect_timeout:
+ 			smtp_final(thread, 1, "Connection timeout to server %s"
+ 					     , FMT_SMTP_RS(smtp_host));
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 			break;
+ 
+ 		case connect_success:
+@@ -695,14 +695,14 @@ smtp_check_thread(thread_t *thread)
+ 			/* Enter the engine at SMTP_START */
+ 			smtp_checker->state = SMTP_START;
+ 			smtp_engine_thread(thread);
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 			break;
+ 	}
+ 
+ 	/* we shouldn't be here */
+ 	smtp_final(thread, 1, "Unknown connection error to server %s"
+ 			     , FMT_SMTP_RS(smtp_host));
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /*
+@@ -757,7 +757,7 @@ smtp_connect_thread(thread_t *thread)
+ 	if (!checker->enabled) {
+ 		thread_add_timer(thread->master, smtp_connect_thread, checker,
+ 				 checker->delay_loop);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/*
+@@ -783,7 +783,7 @@ smtp_connect_thread(thread_t *thread)
+ 		smtp_checker->host_ptr = list_element(smtp_checker->host, 0);
+ 
+ 		thread_add_timer(thread->master, smtp_connect_thread, checker, checker->delay_loop);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	smtp_host = smtp_checker->host_ptr;
+@@ -793,7 +793,7 @@ smtp_connect_thread(thread_t *thread)
+ 		log_message(LOG_INFO, "SMTP_CHECK connection failed to create socket. Rescheduling.");
+ 		thread_add_timer(thread->master, smtp_connect_thread, checker,
+ 				 checker->delay_loop);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ #if !HAVE_DECL_SOCK_NONBLOCK
+@@ -816,7 +816,7 @@ smtp_connect_thread(thread_t *thread)
+ 			checker->delay_loop);
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ #ifdef _TIMER_DEBUG_
+--- a/keepalived/check/check_ssl.c	2018-03-09 23:37:05.400213466 +0000
++++ b/keepalived/check/check_ssl.c	2018-03-09 23:43:01.160268023 +0000
+@@ -244,9 +244,9 @@ ssl_read_thread(thread_t * thread)
+ 	int r = 0;
+ 
+ 	/* Handle read timeout */
+-	if (thread->type == THREAD_READ_TIMEOUT && !req->extracted) {
++	if (thread->reason == THREAD_REASON_READ_TIMEOUT && !req->extracted) {
+ 		timeout_epilog(thread, "Timeout SSL read");
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* read the SSL stream */
+@@ -279,7 +279,7 @@ ssl_read_thread(thread_t * thread)
+ 
+ 		if (r && !req->extracted) {
+ 			timeout_epilog(thread, "SSL read error from");
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 		}
+ 
+ 		/* Handle response stream */
+@@ -287,7 +287,7 @@ ssl_read_thread(thread_t * thread)
+ 
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ #ifdef _TIMER_DEBUG_
+--- a/keepalived/check/check_tcp.c	2018-03-09 23:37:05.401213453 +0000
++++ b/keepalived/check/check_tcp.c	2018-03-09 23:43:01.161268009 +0000
+@@ -162,7 +162,7 @@ tcp_check_thread(thread_t * thread)
+ 		tcp_epilog(thread, false);
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static thread_ret_t
+@@ -180,7 +180,7 @@ tcp_connect_thread(thread_t * thread)
+ 	if (!checker->enabled) {
+ 		thread_add_timer(thread->master, tcp_connect_thread, checker,
+ 				 checker->delay_loop);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	if ((fd = socket(co->dst.ss_family, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, IPPROTO_TCP)) == -1) {
+@@ -188,7 +188,7 @@ tcp_connect_thread(thread_t * thread)
+ 		thread_add_timer(thread->master, tcp_connect_thread, checker,
+ 				checker->delay_loop);
+ 
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ #if !HAVE_DECL_SOCK_NONBLOCK
+@@ -212,7 +212,7 @@ tcp_connect_thread(thread_t * thread)
+ 				checker->delay_loop);
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ #ifdef _TIMER_DEBUG_
+--- a/keepalived/core/keepalived_netlink.c	2018-03-09 23:37:05.404213411 +0000
++++ b/keepalived/core/keepalived_netlink.c	2018-03-09 23:43:01.162267996 +0000
+@@ -1592,11 +1592,11 @@ kernel_netlink(thread_t * thread)
+ {
+ 	nl_handle_t *nl = THREAD_ARG(thread);
+ 
+-	if (thread->type != THREAD_READ_TIMEOUT)
++	if (thread->reason != THREAD_REASON_READ_TIMEOUT)
+ 		netlink_parse_info(netlink_broadcast_filter, nl, NULL, true);
+ 	nl->thread = thread_add_read(master, kernel_netlink, nl, nl->fd,
+ 				      NETLINK_TIMER);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ #ifdef _WITH_VRRP_
+--- a/keepalived/core/layer4.c	2018-03-09 23:37:05.404213411 +0000
++++ b/keepalived/core/layer4.c	2018-03-09 23:43:01.162267996 +0000
+@@ -115,7 +115,7 @@ socket_state(thread_t * thread, thread_r
+ 	timeval_t timer_min;
+ 
+ 	/* Handle connection timeout */
+-	if (thread->type == THREAD_WRITE_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_WRITE_TIMEOUT) {
+ 		close(thread->u.fd);
+ 		return connect_timeout;
+ 	}
+--- a/keepalived/core/smtp.c	2018-03-09 23:37:05.405213397 +0000
++++ b/keepalived/core/smtp.c	2018-03-09 23:43:01.163267982 +0000
+@@ -108,7 +108,7 @@ connection_error(thread_t * thread)
+ 	log_message(LOG_INFO, "SMTP connection ERROR to %s."
+ 			    , FMT_SMTP_HOST());
+ 	free_smtp_all(smtp);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ static thread_ret_t
+ connection_timeout(thread_t * thread)
+@@ -118,7 +118,7 @@ connection_timeout(thread_t * thread)
+ 	log_message(LOG_INFO, "Timeout connecting SMTP server %s."
+ 			    , FMT_SMTP_HOST());
+ 	free_smtp_all(smtp);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ static thread_ret_t
+ connection_in_progress(thread_t * thread)
+@@ -137,7 +137,7 @@ connection_in_progress(thread_t * thread
+ 	if (status != connect_in_progress)
+ 		SMTP_FSM_SEND(status, thread);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ static thread_ret_t
+ connection_success(thread_t * thread)
+@@ -150,7 +150,7 @@ connection_success(thread_t * thread)
+ 	smtp->stage = connect_success;
+ 	thread_add_read(thread->master, smtp_read_thread, smtp,
+ 			smtp->fd, global_data->smtp_connection_to);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /* SMTP protocol handlers */
+@@ -165,11 +165,11 @@ smtp_read_thread(thread_t * thread)
+ 
+ 	smtp = THREAD_ARG(thread);
+ 
+-	if (thread->type == THREAD_READ_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_READ_TIMEOUT) {
+ 		log_message(LOG_INFO, "Timeout reading data to remote SMTP server %s."
+ 				    , FMT_SMTP_HOST());
+ 		SMTP_FSM_READ(QUIT, thread, 0);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	buffer = smtp->buffer;
+@@ -183,12 +183,12 @@ smtp_read_thread(thread_t * thread)
+ 		log_message(LOG_INFO, "Error reading data from remote SMTP server %s."
+ 				    , FMT_SMTP_HOST());
+ 		SMTP_FSM_READ(QUIT, thread, 0);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	} else if (rcv_buffer_size == 0) {
+ 		log_message(LOG_INFO, "Remote SMTP server %s has closed the connection."
+ 				    , FMT_SMTP_HOST());
+ 		SMTP_FSM_READ(QUIT, thread, 0);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* received data overflow buffer size ? */
+@@ -197,7 +197,7 @@ smtp_read_thread(thread_t * thread)
+ 				      " overflow our get read buffer length."
+ 				    , FMT_SMTP_HOST());
+ 		SMTP_FSM_READ(QUIT, thread, 0);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	} else {
+ 		smtp->buflen += (size_t)rcv_buffer_size;
+ 		buffer[smtp->buflen] = 0;	/* NULL terminate */
+@@ -220,7 +220,7 @@ end:
+ 			thread_add_read(thread->master, smtp_read_thread,
+ 					smtp, thread->u.fd,
+ 					global_data->smtp_connection_to);
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 		}
+ 
+ 		if (reply[3] == '-') {
+@@ -242,7 +242,7 @@ end:
+ 	if (status == -1) {
+ 		thread_add_read(thread->master, smtp_read_thread, smtp,
+ 				thread->u.fd, global_data->smtp_connection_to);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	SMTP_FSM_READ(smtp->stage, thread, status);
+@@ -257,7 +257,7 @@ end:
+ 		SMTP_FSM_READ(QUIT, thread, 0);
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static thread_ret_t
+@@ -265,11 +265,11 @@ smtp_send_thread(thread_t * thread)
+ {
+ 	smtp_t *smtp = THREAD_ARG(thread);
+ 
+-	if (thread->type == THREAD_WRITE_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_WRITE_TIMEOUT) {
+ 		log_message(LOG_INFO, "Timeout sending data to remote SMTP server %s."
+ 				    , FMT_SMTP_HOST());
+ 		SMTP_FSM_READ(QUIT, thread, 0);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	SMTP_FSM_SEND(smtp->stage, thread);
+@@ -277,7 +277,7 @@ smtp_send_thread(thread_t * thread)
+ 	/* Handle END command */
+ 	if (smtp->stage == END) {
+ 		SMTP_FSM_READ(QUIT, thread, 0);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* Registering next smtp command processing thread */
+@@ -290,7 +290,7 @@ smtp_send_thread(thread_t * thread)
+ 		SMTP_FSM_READ(QUIT, thread, 0);
+ 	}
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static int
+@@ -324,7 +324,7 @@ helo_cmd(thread_t * thread)
+ 		smtp->stage = ERROR;
+ 	FREE(buffer);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ static int
+ helo_code(thread_t * thread, int status)
+@@ -357,7 +357,7 @@ mail_cmd(thread_t * thread)
+ 		smtp->stage = ERROR;
+ 	FREE(buffer);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ static int
+ mail_code(thread_t * thread, int status)
+@@ -396,7 +396,7 @@ rcpt_cmd(thread_t * thread)
+ 		smtp->stage = ERROR;
+ 	FREE(buffer);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ static int
+ rcpt_code(thread_t * thread, int status)
+@@ -430,7 +430,7 @@ data_cmd(thread_t * thread)
+ 
+ 	if (send(thread->u.fd, SMTP_DATA_CMD, strlen(SMTP_DATA_CMD), 0) == -1)
+ 		smtp->stage = ERROR;
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ static int
+ data_code(thread_t * thread, int status)
+@@ -538,7 +538,7 @@ body_cmd(thread_t * thread)
+ 		smtp->stage = ERROR;
+ 
+ 	FREE(buffer);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ static int
+ body_code(thread_t * thread, int status)
+@@ -569,7 +569,7 @@ quit_cmd(thread_t * thread)
+ 		smtp->stage = ERROR;
+ 	else
+ 		smtp->stage++;
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static int
+--- a/keepalived/vrrp/vrrp_daemon.c	2018-03-09 23:37:05.407213370 +0000
++++ b/keepalived/vrrp/vrrp_daemon.c	2018-03-09 23:43:01.164267968 +0000
+@@ -101,7 +101,7 @@ vrrp_notify_fifo_script_exit(__attribute
+ {
+ 	log_message(LOG_INFO, "vrrp notify fifo script terminated");
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /* Daemon stop sequence */
+@@ -400,7 +400,7 @@ send_reload_advert_thread(thread_t *thre
+ 	if (THREAD_VAL(thread))
+ 		thread_add_event(master, reload_vrrp_thread, NULL, 0);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static void
+@@ -546,7 +546,7 @@ reload_vrrp_thread(__attribute__((unused
+ 
+ 	UNSET_RELOAD;
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ #endif
+ 
+@@ -554,14 +554,14 @@ static thread_ret_t
+ print_vrrp_data(__attribute__((unused)) thread_t * thread)
+ {
+ 	vrrp_print_data();
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static thread_ret_t
+ print_vrrp_stats(__attribute__((unused)) thread_t * thread)
+ {
+ 	vrrp_print_stats();
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ #ifdef _WITH_JSON_
+@@ -569,7 +569,7 @@ static thread_ret_t
+ print_vrrp_json(__attribute__((unused)) thread_t * thread)
+ {
+ 	vrrp_print_json();
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ #endif
+ 
+@@ -584,10 +584,10 @@ vrrp_respawn_thread(thread_t * thread)
+ 	pid = THREAD_CHILD_PID(thread);
+ 
+ 	/* Restart respawning thread */
+-	if (thread->type == THREAD_CHILD_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_CHILD_TIMEOUT) {
+ 		thread_add_child(master, vrrp_respawn_thread, NULL,
+ 				 pid, RESPAWN_TIMER);
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* We catch a SIGCHLD, handle it */
+@@ -599,7 +599,7 @@ vrrp_respawn_thread(thread_t * thread)
+ 		vrrp_child = 0;
+ 		raise(SIGTERM);
+ 	}
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ #endif
+ 
+--- a/keepalived/vrrp/vrrp_dbus.c	2018-03-09 23:37:05.408213356 +0000
++++ b/keepalived/vrrp/vrrp_dbus.c	2018-03-09 23:43:01.165267954 +0000
+@@ -791,7 +791,7 @@ handle_dbus_msg(__attribute__((unused))
+ 
+ 	thread_add_read(master, handle_dbus_msg, NULL, dbus_in_pipe[0], TIMER_NEVER);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ void
+--- a/keepalived/vrrp/vrrp_if.c	2018-03-09 23:37:05.409213342 +0000
++++ b/keepalived/vrrp/vrrp_if.c	2018-03-09 23:43:01.165267954 +0000
+@@ -537,7 +537,7 @@ if_linkbeat_refresh_thread(thread_t * th
+ 
+ 	/* Register next polling thread */
+ 	thread_add_timer(master, if_linkbeat_refresh_thread, ifp, POLLING_DELAY);
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ void
+--- a/keepalived/vrrp/vrrp_scheduler.c	2018-03-09 23:37:05.410213328 +0000
++++ b/keepalived/vrrp/vrrp_scheduler.c	2018-03-09 23:43:01.165267954 +0000
+@@ -630,7 +630,7 @@ vrrp_dispatcher_init(__attribute__((unus
+ 
+ 	vrrp_initialised = true;
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ void
+@@ -674,7 +674,7 @@ vrrp_gratuitous_arp_thread(thread_t * th
+ 	/* Simply broadcast the gratuitous ARP */
+ 	vrrp_send_link_update(vrrp, vrrp->garp_rep);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /* Delayed gratuitous ARP thread after receiving a lower priority advert */
+@@ -686,7 +686,7 @@ vrrp_lower_prio_gratuitous_arp_thread(th
+ 	/* Simply broadcast the gratuitous ARP */
+ 	vrrp_send_link_update(vrrp, vrrp->garp_lower_prio_rep);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static void
+@@ -810,13 +810,13 @@ vrrp_bfd_thread(thread_t * thread)
+ 	bfd_thread = thread_add_read(master, vrrp_bfd_thread, NULL,
+ 				     thread->u.fd, TIMER_HZ * 60);
+ 
+-	if (thread->type != THREAD_READY_FD)
+-		return false;
++	if (thread->reason != THREAD_REASON_READY_FD)
++		return THREAD_DONT_REQUEUE;
+ 
+ 	while (read(thread->u.fd, &evt, sizeof(bfd_event_t)) != -1)
+ 		vrrp_handle_bfd_event(&evt);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ #endif
+ 
+@@ -931,7 +931,7 @@ vrrp_read_dispatcher_thread(thread_t * t
+ 	sock = THREAD_ARG(thread);
+ 
+ 	/* Dispatcher state handler */
+-	if (thread->type == THREAD_READ_TIMEOUT || sock->fd_in == -1)
++	if (thread->reason == THREAD_REASON_READ_TIMEOUT || sock->fd_in == -1)
+ 		fd = vrrp_dispatcher_read_timeout(sock->fd_in);
+ 	else
+ 		fd = vrrp_dispatcher_read(sock);
+@@ -942,7 +942,7 @@ vrrp_read_dispatcher_thread(thread_t * t
+ 		sock->thread = thread_add_read(thread->master, vrrp_read_dispatcher_thread,
+ 					       sock, fd, vrrp_timer);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static thread_ret_t
+@@ -960,7 +960,7 @@ vrrp_script_thread(thread_t * thread)
+ 		log_message(LOG_INFO, "Track script %s is %s, expect idle - skipping run",
+ 			    vscript->sname, vscript->state == SCRIPT_STATE_RUNNING ? "already running" : "being timed out");
+ 
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	/* Execute the script in a child process. Parent returns, child doesn't */
+@@ -970,7 +970,7 @@ vrrp_script_thread(thread_t * thread)
+ 	if (!ret)
+ 		vscript->state = SCRIPT_STATE_RUNNING;
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static thread_ret_t
+@@ -986,7 +986,7 @@ vrrp_script_child_thread(thread_t * thre
+ 	char *reason = NULL;
+ 	int reason_code;
+ 
+-	if (thread->type == THREAD_CHILD_TIMEOUT) {
++	if (thread->reason == THREAD_REASON_CHILD_TIMEOUT) {
+ 		pid = THREAD_CHILD_PID(thread);
+ 
+ 		if (vscript->state == SCRIPT_STATE_RUNNING) {
+@@ -1017,7 +1017,7 @@ vrrp_script_child_thread(thread_t * thre
+ 		if (timeout)
+ 			thread_add_child(thread->master, vrrp_script_child_thread, vscript, pid, timeout * TIMER_HZ);
+ 
+-		return false;
++		return THREAD_DONT_REQUEUE;
+ 	}
+ 
+ 	wait_status = THREAD_CHILD_STATUS(thread);
+@@ -1095,7 +1095,7 @@ vrrp_script_child_thread(thread_t * thre
+ 	vscript->state = SCRIPT_STATE_IDLE;
+ 	vscript->init_state = SCRIPT_INIT_STATE_DONE;
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ /* Delayed ARP/NA thread */
+@@ -1188,7 +1188,7 @@ vrrp_arp_thread(thread_t *thread)
+ 	else
+ 		garp_thread = NULL;
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ #ifdef _WITH_DUMP_THREADS_
+@@ -1230,19 +1230,19 @@ dump_thread_list( FILE *fp, thread_list_
+ 
+ 	fprintf(fp, "\n  %s thread list dump\n", type);
+ 	for (thread = tlist->head; thread; thread = thread->next) {
+-		fprintf(fp, "\n    type = %d (%s)\n", thread->type,
++		fprintf(fp, "\n    type = %d (%s)\n", thread->reason != THREAD_REASON_WAITING ? thread->reason : thread->type,
++				thread->reason == THREAD_REASON_READY ? "THREAD_REASON_READY" :
++				thread->reason == THREAD_REASON_WRITE_TIMEOUT ? "THREAD_REASON_WRITE_TIMEOUT" :
++				thread->reason == THREAD_REASON_READ_TIMEOUT ? "THREAD_REASON_READ_TIMEOUT" :
++				thread->reason == THREAD_REASON_CHILD_TIMEOUT ? "THREAD_REASON_CHILD_TIMEOUT" :
++				thread->reason == THREAD_REASON_READY_FD ? "THREAD_REASON_READY_FD" :
+ 				thread->type == THREAD_READ ? "THREAD_READ" :
+ 				thread->type == THREAD_WRITE ? "THREAD_WRITE" :
+ 				thread->type == THREAD_TIMER ? "THREAD_TIMER" :
+ 				thread->type == THREAD_EVENT ? "THREAD_EVENT" :
+ 				thread->type == THREAD_CHILD ? "THREAD_CHILD" :
+-				thread->type == THREAD_READY ? "THREAD_READY" :
+ 				thread->type == THREAD_UNUSED ? "THREAD_UNUSED" :
+-				thread->type == THREAD_WRITE_TIMEOUT ? "THREAD_WRITE_TIMEOUT" :
+-				thread->type == THREAD_READ_TIMEOUT ? "THREAD_READ_TIMEOUT" :
+-				thread->type == THREAD_CHILD_TIMEOUT ? "THREAD_CHILD_TIMEOUT" :
+ 				thread->type == THREAD_TERMINATE ? "THREAD_TERMINATE" :
+-				thread->type == THREAD_READY_FD ? "THREAD_READY_FD" :
+ 				"unknown");
+ 
+ 		fprintf(fp, "    id = %lu\n", thread->id);
+--- a/keepalived/vrrp/vrrp_track.c	2018-03-09 23:37:05.411213314 +0000
++++ b/keepalived/vrrp/vrrp_track.c	2018-03-09 23:43:01.166267940 +0000
+@@ -921,17 +921,17 @@ process_inotify(thread_t *thread)
+ 		if ((len = read(fd, buf, sizeof(buf))) < (ssize_t)sizeof(struct inotify_event)) {
+ 			if (len == -1) {
+ 				if (errno == EAGAIN)
+-					return false;
++					return THREAD_DONT_REQUEUE;
+ 
+ 				if (errno == EINTR)
+ 					continue;
+ 
+ 				log_message(LOG_INFO, "inotify read() returned error %d - %m", errno);
+-				return false;
++				return THREAD_DONT_REQUEUE;
+ 			}
+ 
+ 			log_message(LOG_INFO, "inotify read() returned short length %zd", len);
+-			return false;
++			return THREAD_DONT_REQUEUE;
+ 		}
+ 
+ 		for (buf_ptr = buf; buf_ptr < buf + len; buf_ptr += event->len + sizeof(struct inotify_event)) {
+--- a/lib/scheduler.c	2018-03-09 23:37:05.437212955 +0000
++++ b/lib/scheduler.c	2018-03-09 23:43:01.167267926 +0000
+@@ -255,6 +255,7 @@ thread_make_master(void)
+ static void
+ thread_list_add(thread_list_t * list, thread_t * thread)
+ {
++	thread->reason = THREAD_REASON_WAITING;
+ 	thread->next = NULL;
+ 	thread->prev = list->tail;
+ 	if (list->tail)
+@@ -269,6 +270,7 @@ thread_list_add(thread_list_t * list, th
+ static void
+ thread_list_add_before(thread_list_t * list, thread_t * point, thread_t * thread)
+ {
++	thread->reason = THREAD_REASON_WAITING;
+ 	thread->next = point;
+ 	thread->prev = point->prev;
+ 	if (point->prev)
+@@ -319,10 +321,10 @@ thread_list_delete(thread_list_t * list,
+ }
+ 
+ static void
+-thread_list_make_ready(thread_list_t *list, thread_t *thread, thread_master_t *m, thread_type_t type)
++thread_list_make_ready(thread_list_t *list, thread_t *thread, thread_master_t *m, thread_type_t reason)
+ {
+ 	thread_list_delete(list, thread);
+-	thread->type = type;
++	thread->reason = reason;
+ 	thread_list_add(&m->ready, thread);
+ }
+ 
+@@ -662,6 +664,58 @@ thread_add_terminate_event(thread_master
+ 	return thread;
+ }
+ 
++static void
++thread_add_requeue(thread_t *thread, unsigned long timer)
++{
++	thread_list_t *list;
++
++	thread->id = 0;
++
++	if (thread->type == THREAD_READ)
++		list = &thread->master->read;
++	else if (thread->type == THREAD_TIMER)
++		list = &thread->master->timer;
++	else if (thread->type == THREAD_CHILD)
++		list = &thread->master->child;
++	else if (thread->type == THREAD_WRITE)
++		list = &thread->master->write;
++	else {
++		log_message(LOG_INFO, "Requeuing thread type %d not supported", thread->type);
++
++		thread->type = THREAD_UNUSED;
++		thread_add_unuse(thread->master, thread);
++
++		return;
++	}
++
++	/* Compute child timeout value */
++	if (timer == TIMER_NEVER)
++		thread->sands.tv_sec = TIMER_DISABLED;
++	else {
++		set_time_now();
++		thread->sands = timer_add_long(time_now, timer);
++	}
++
++	thread_list_add_timeval(list, thread);
++
++	if (thread->type == THREAD_CHILD && child_adder)
++		child_adder(thread);
++}
++
++static void
++recalc_max_fd(thread_master_t *m, int fd)
++{
++	int fi;
++
++	for (fi = fd; fi >= 0; fi--) {
++		if (FD_ISSET(fi, &m->readfd) || FD_ISSET(fi, &m->writefd)) {
++			m->max_fd = fi;
++			return;
++		}
++	}
++	m->max_fd = 0;
++}
++
+ /* Cancel thread from scheduler. */
+ int
+ thread_cancel(thread_t * thread)
+@@ -669,39 +723,51 @@ thread_cancel(thread_t * thread)
+ 	if (!thread)
+ 		return -1;
+ 
+-	switch (thread->type) {
+-	case THREAD_READ:
+-		assert(FD_ISSET(thread->u.fd, &thread->master->readfd));
+-		FD_CLR(thread->u.fd, &thread->master->readfd);
+-		thread_list_delete(&thread->master->read, thread);
+-		break;
+-	case THREAD_WRITE:
+-		assert(FD_ISSET(thread->u.fd, &thread->master->writefd));
+-		FD_CLR(thread->u.fd, &thread->master->writefd);
+-		thread_list_delete(&thread->master->write, thread);
+-		break;
+-	case THREAD_TIMER:
+-		thread_list_delete(&thread->master->timer, thread);
+-		break;
+-	case THREAD_CHILD:
+-		/* Does this need to kill the child, or is that the
+-		 * caller's job?
+-		 * This function is currently unused, so leave it for now.
+-		 */
+-		thread_list_delete(&thread->master->child, thread);
+-		break;
+-	case THREAD_EVENT:
+-		thread_list_delete(&thread->master->event, thread);
+-		break;
++	if (thread->reason != THREAD_REASON_WAITING) {
++/*
+ 	case THREAD_READY:
+ 	case THREAD_READY_FD:
+ 	case THREAD_READ_TIMEOUT:
+ 	case THREAD_WRITE_TIMEOUT:
+ 	case THREAD_CHILD_TIMEOUT:
++*/
+ 		thread_list_delete(&thread->master->ready, thread);
+-		break;
+-	default:
+-		break;
++	}
++	else
++	{
++		switch (thread->type) {
++		case THREAD_READ:
++			assert(FD_ISSET(thread->u.fd, &thread->master->readfd));
++			FD_CLR(thread->u.fd, &thread->master->readfd);
++			if (thread->u.fd == thread->master->max_fd)
++				recalc_max_fd(thread->master, thread->u.fd);
++			thread_list_delete(&thread->master->read, thread);
++			break;
++		case THREAD_WRITE:
++			assert(FD_ISSET(thread->u.fd, &thread->master->writefd));
++			FD_CLR(thread->u.fd, &thread->master->writefd);
++			if (thread->u.fd == thread->master->max_fd)
++				recalc_max_fd(thread->master, thread->u.fd);
++			thread_list_delete(&thread->master->write, thread);
++			break;
++		case THREAD_TIMER:
++			thread_list_delete(&thread->master->timer, thread);
++			break;
++		case THREAD_CHILD:
++			/* Does this need to kill the child, or is that the
++			 * caller's job?
++			 * This function is currently unused, so leave it for now.
++			 */
++			thread_list_delete(&thread->master->child, thread);
++			if (child_remover)
++				child_remover(thread);
++			break;
++		case THREAD_EVENT:
++			thread_list_delete(&thread->master->event, thread);
++			break;
++		default:
++			break;
++		}
+ 	}
+ 
+ 	thread->type = THREAD_UNUSED;
+@@ -910,7 +976,7 @@ retry:	/* When thread can't fetch try to
+ 				break;
+ 
+ 			if (timercmp(&time_now, &t->sands, >=)) {
+-				thread_list_make_ready(&m->child, t, m, THREAD_CHILD_TIMEOUT);
++				thread_list_make_ready(&m->child, t, m, THREAD_REASON_CHILD_TIMEOUT);
+ 				if (child_remover)
+ 					child_remover(t);
+ 			}
+@@ -927,15 +993,14 @@ retry:	/* When thread can't fetch try to
+ 		thread = t->next;
+ 
+ 		if (num_fds && FD_ISSET(t->u.fd, &readfd)) {
+-			assert(FD_ISSET(t->u.fd, &m->readfd));
+ 			num_fds--;
+ 			FD_CLR(t->u.fd, &m->readfd);
+-			thread_list_make_ready(&m->read, t, m, THREAD_READY_FD);
++			thread_list_make_ready(&m->read, t, m, THREAD_REASON_READY_FD);
+ 		} else if (!timers_done &&
+ 			   t->sands.tv_sec != TIMER_DISABLED &&
+ 			   timercmp(&time_now, &t->sands, >=)) {
+ 			FD_CLR(t->u.fd, &m->readfd);
+-			thread_list_make_ready(&m->read, t, m, THREAD_READ_TIMEOUT);
++			thread_list_make_ready(&m->read, t, m, THREAD_REASON_READ_TIMEOUT);
+ 		}
+ 		else
+ 			timers_done = true;
+@@ -949,15 +1014,14 @@ retry:	/* When thread can't fetch try to
+ 		thread = t->next;
+ 
+ 		if (num_fds && FD_ISSET(t->u.fd, &writefd)) {
+-			assert(FD_ISSET(t->u.fd, &writefd));
+ 			num_fds--;
+ 			FD_CLR(t->u.fd, &m->writefd);
+-			thread_list_make_ready(&m->write, t, m, THREAD_READY_FD);
++			thread_list_make_ready(&m->write, t, m, THREAD_REASON_READY_FD);
+ 		} else if (!timers_done &&
+ 			   t->sands.tv_sec != TIMER_DISABLED &&
+ 			   timercmp(&time_now, &t->sands, >=)) {
+ 			FD_CLR(t->u.fd, &m->writefd);
+-			thread_list_make_ready(&m->write, t, m, THREAD_WRITE_TIMEOUT);
++			thread_list_make_ready(&m->write, t, m, THREAD_REASON_WRITE_TIMEOUT);
+ 		}
+ 		else
+ 			timers_done = true;
+@@ -973,7 +1037,7 @@ retry:	/* When thread can't fetch try to
+ 			thread = t->next;
+ 
+ 			if (timercmp(&time_now, &t->sands, >=))
+-				thread_list_make_ready(&m->timer, t, m, THREAD_READY);
++				thread_list_make_ready(&m->timer, t, m, THREAD_REASON_READY);
+ 			else
+ 				break;
+ 		}
+@@ -991,12 +1055,34 @@ retry:	/* When thread can't fetch try to
+ 	return &m->ready;
+ }
+ 
++/* Make unique thread id for non pthread version of thread manager. */
++static inline unsigned long
++thread_get_id(void)
++{
++	static unsigned long int counter = 0;
++	return ++counter;
++}
++
++/* Call thread ! */
++static thread_ret_t
++thread_call(thread_t * thread)
++{
++	thread->id = thread_get_id();
++#ifdef _TIMER_DEBUG_
++#ifndef _DEBUG_
++	if (prog_type == PROG_TYPE_VRRP)
++#endif
++		log_message(LOG_INFO, "Calling thread function, type %s, addr 0x%p, val/fd/pid %d, status %d", get_thread_type_str(thread), thread->func, thread->u.val, thread->u.c.status);
++#endif
++	return (*thread->func)(thread);
++}
++
+ void
+ process_threads(thread_master_t *m)
+ {
+ 	thread_t* thread;
+ 	thread_list_t* thread_list;
+-	int thread_type;
++	thread_ret_t requeue_timer;
+ 
+ 	/*
+ 	 * Processing the master thread queues,
+@@ -1021,14 +1107,22 @@ process_threads(thread_master_t *m)
+ 		thread = thread_trim_head(thread_list);
+ 
+ 		if (thread->func)
+-			thread_call(thread);
++			requeue_timer = thread_call(thread);
++		else
++			requeue_timer = THREAD_DONT_REQUEUE;
+ 
+-		thread_type = thread->type;
+-		thread->type = THREAD_UNUSED;
+-		thread_add_unuse(master, thread);
++		if (requeue_timer == THREAD_DONT_REQUEUE) {
++			if ((thread->type == THREAD_READ || thread->type == THREAD_WRITE) &&
++			    thread->u.fd == thread->master->max_fd)
++				recalc_max_fd(thread->master, thread->u.fd);
++
++			thread->type = THREAD_UNUSED;
++			thread_add_unuse(master, thread);
++		} else
++			thread_add_requeue(thread, requeue_timer);
+ 
+ 		/* If daemon hanging event is received stop processing */
+-		if (thread_type == THREAD_TERMINATE)
++		if (thread->type == THREAD_TERMINATE)
+ 			return;
+ 	}
+ }
+@@ -1071,7 +1165,7 @@ process_child_termination(pid_t pid, int
+ 	}
+ 	else
+ 	{
+-		thread->type = THREAD_READY;
++		thread->reason = THREAD_REASON_READY;
+ 		thread->u.c.status = status;
+ 		thread_list_add(&m->ready, thread);
+ 	}
+@@ -1095,49 +1189,30 @@ thread_child_handler(__attribute__((unus
+ 	}
+ }
+ 
+-/* Make unique thread id for non pthread version of thread manager. */
+-static inline unsigned long
+-thread_get_id(void)
+-{
+-	static unsigned long int counter = 0;
+-	return ++counter;
+-}
+-
+ #ifdef _TIMER_DEBUG_
+ static const char *
+-get_thread_type_str(thread_type_t id)
++get_thread_type_str(const thread_t *thread)
+ {
+-	if (id == THREAD_READ) return "READ";
+-	if (id == THREAD_WRITE) return "WRITE";
+-	if (id == THREAD_TIMER) return "TIMER";
+-	if (id == THREAD_EVENT) return "EVENT";
+-	if (id == THREAD_CHILD) return "CHILD";
+-	if (id == THREAD_READY) return "READY";
+-	if (id == THREAD_UNUSED) return "UNUSED";
+-	if (id == THREAD_WRITE_TIMEOUT) return "WRITE_TIMEOUT";
+-	if (id == THREAD_READ_TIMEOUT) return "READ_TIMEOUT";
+-	if (id == THREAD_CHILD_TIMEOUT) return "CHILD_TIMEOUT";
+-	if (id == THREAD_TERMINATE) return "TERMINATE";
+-	if (id == THREAD_READY_FD) return "READY_FD";
++	if (thread->reason != THREAD_REASON_WAITING) {
++		if (thread->reason == THREAD_REASON_READY) return "READY";
++		if (thread->reason == THREAD_REASON_WRITE_TIMEOUT) return "WRITE_TIMEOUT";
++		if (thread->reason == THREAD_REASON_READ_TIMEOUT) return "READ_TIMEOUT";
++		if (thread->reason == THREAD_REASON_CHILD_TIMEOUT) return "CHILD_TIMEOUT";
++		if (thread->reason == THREAD_REASON_READY_FD) return "READY_FD";
++	} else {
++		if (thread->type == THREAD_READ) return "READ";
++		if (thread->type == THREAD_WRITE) return "WRITE";
++		if (thread->type == THREAD_TIMER) return "TIMER";
++		if (thread->type == THREAD_EVENT) return "EVENT";
++		if (thread->type == THREAD_CHILD) return "CHILD";
++		if (thread->type == THREAD_UNUSED) return "UNUSED";
++		if (thread->type == THREAD_TERMINATE) return "TERMINATE";
++	}
+ 
+ 	return "unknown";
+ }
+ #endif
+ 
+-/* Call thread ! */
+-void
+-thread_call(thread_t * thread)
+-{
+-	thread->id = thread_get_id();
+-#ifdef _TIMER_DEBUG_
+-#ifndef _DEBUG_
+-	if (prog_type == PROG_TYPE_VRRP)
+-#endif
+-		log_message(LOG_INFO, "Calling thread function, type %s, addr 0x%p, val/fd/pid %d, status %d", get_thread_type_str(thread->type), thread->func, thread->u.val, thread->u.c.status);
+-#endif
+-	(*thread->func) (thread);
+-}
+-
+ /* Our infinite scheduling loop */
+ void
+ launch_scheduler(void)
+--- a/lib/scheduler.h	2018-03-09 23:37:05.437212955 +0000
++++ b/lib/scheduler.h	2018-03-09 23:43:01.167267926 +0000
+@@ -38,23 +38,30 @@ typedef enum {
+ 	THREAD_TIMER,
+ 	THREAD_EVENT,
+ 	THREAD_CHILD,
+-	THREAD_READY,
+ 	THREAD_UNUSED,
+-	THREAD_WRITE_TIMEOUT,
+-	THREAD_READ_TIMEOUT,
+-	THREAD_CHILD_TIMEOUT,
+ 	THREAD_TERMINATE,
+-	THREAD_READY_FD,
+ 	THREAD_IF_UP,
+ 	THREAD_IF_DOWN
+ } thread_type_t;
+ 
+-typedef bool thread_ret_t;
++typedef enum {
++	THREAD_REASON_WAITING,
++	THREAD_REASON_READY,
++	THREAD_REASON_READY_FD,
++	THREAD_REASON_WRITE_TIMEOUT,
++	THREAD_REASON_READ_TIMEOUT,
++	THREAD_REASON_CHILD_TIMEOUT,
++} thread_reason_t;
++
++typedef unsigned long thread_ret_t;
++
++#define THREAD_DONT_REQUEUE false
+ 
+ /* Thread itself. */
+ typedef struct _thread {
+ 	unsigned long id;
+ 	thread_type_t type;		/* thread type */
++	thread_reason_t reason;		/* reason the thread is ready to run */
+ 	struct _thread *next;		/* next pointer of the thread */
+ 	struct _thread *prev;		/* previous pointer of the thread */
+ 	struct _thread_master *master;	/* pointer to the struct thread_master. */
+@@ -154,7 +161,6 @@ extern thread_t *thread_add_event(thread
+ extern int thread_cancel(thread_t *);
+ extern void thread_cancel_read(thread_master_t *, int);
+ extern void process_threads(thread_master_t *);
+-extern void thread_call(thread_t *);
+ extern void thread_child_handler(void *, int);
+ extern void launch_scheduler(void);
+ #endif
+--- a/lib/signals.c	2018-03-09 23:37:05.438212941 +0000
++++ b/lib/signals.c	2018-03-09 23:43:01.167267926 +0000
+@@ -311,7 +311,7 @@ signal_run_callback(__attribute__((unuse
+ 
+ 	signal_thread = thread_add_read(master, signal_run_callback, NULL, signal_rfd(), TIMER_NEVER);
+ 
+-	return false;
++	return THREAD_DONT_REQUEUE;
+ }
+ 
+ static void
