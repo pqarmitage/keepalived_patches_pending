@@ -2,8 +2,16 @@
 
 PATCH_FILE=${1:-/tmp/diff.patch}
 
+if [[ -n $2 ]]; then
+	OP_DIR=$2
+elif [[ $0 =~ / ]]; then
+	OP_DIR=${0%/*}/split
+else
+	OP_DIR=split
+fi
+
 [[ ! -f $PATCH_FILE ]] && echo Cannot find $PATCH_FILE && exit 1
 
 for l in $(sed -e "s/\(^[A-Z]*\).*/\1/" -e "s/\([^@]\)/\1@/g" <$PATCH_FILE | tr "@" "\n" | sort -u); do
-	grep "^[A-Z]*$l" <$PATCH_FILE | sed -e "s/^[A-Z]*//" >../patches/$l.patch
+	grep "^[A-Z]*$l" <$PATCH_FILE | sed -e "s/^[A-Z]*//" >${OP_DIR}/$l.patch
 done
