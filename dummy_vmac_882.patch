@@ -1,0 +1,111 @@
+ This is from issue 882, changing the MAC address of a VMAC interface when
+ it is in backup mode.
+
+ Needs to be updated in line with the comments in the issue.
+
+diff --git a/keepalived/include/vrrp_vmac.h b/keepalived/include/vrrp_vmac.h
+index 90fe3805..d283011b 100644
+--- a/keepalived/include/vrrp_vmac.h
++++ b/keepalived/include/vrrp_vmac.h
+@@ -48,5 +48,6 @@ extern u_char ll_addr[ETH_ALEN];
+ /* prototypes */
+ extern int netlink_link_add_vmac(vrrp_t *);
+ extern int netlink_link_del_vmac(vrrp_t *);
++extern int netlink_link_reset_vmac_addr(vrrp_t *vrrp, bool dummy_mac);
+ 
+ #endif
+diff --git a/keepalived/vrrp/vrrp.c b/keepalived/vrrp/vrrp.c
+index fc909b7e..82b165f4 100644
+--- a/keepalived/vrrp/vrrp.c
++++ b/keepalived/vrrp/vrrp.c
+@@ -1336,6 +1336,10 @@ vrrp_state_become_master(vrrp_t * vrrp)
+ 	if (!LIST_ISEMPTY(vrrp->evip))
+ 		vrrp_handle_ipaddress(vrrp, IPADDRESS_ADD, VRRP_EVIP_TYPE);
+ 	vrrp->vipset = 1;
++#ifdef _HAVE_VRRP_VMAC_
++	if (__test_bit(VRRP_VMAC_BIT, &vrrp->vmac_flags))
++		netlink_link_reset_vmac_addr(vrrp, false);
++#endif
+ 
+ #ifdef _HAVE_FIB_ROUTING_
+ 	/* add virtual routes */
+@@ -1456,6 +1460,10 @@ vrrp_restore_interface(vrrp_t * vrrp, bool advF, bool force)
+ 			vrrp_handle_ipaddress(vrrp, IPADDRESS_DEL, VRRP_EVIP_TYPE);
+ 		vrrp_handle_accept_mode(vrrp, IPADDRESS_DEL, force);
+ 		vrrp->vipset = 0;
++#ifdef _HAVE_VRRP_VMAC_
++		if (__test_bit(VRRP_VMAC_BIT, &vrrp->vmac_flags))
++			netlink_link_reset_vmac_addr(vrrp, true);
++#endif
+ 	}
+ }
+ 
+@@ -2262,7 +2270,8 @@ vrrp_complete_instance(vrrp_t * vrrp)
+ 				    !memcmp(ifp->hw_addr, ll_addr, sizeof(ll_addr) - 2) &&
+ 				    ((vrrp->family == AF_INET && ifp->hw_addr[sizeof(ll_addr) - 2] == 0x01) ||
+ 				     (vrrp->family == AF_INET6 && ifp->hw_addr[sizeof(ll_addr) - 2] == 0x02)) &&
+-				    ifp->hw_addr[sizeof(ll_addr) - 1] == vrrp->vrid &&
++				    ((ifp->hw_addr[sizeof(ll_addr) - 1] == vrrp->vrid) ||
++				     (ifp->hw_addr[sizeof(ll_addr) - 1] == 0x00)) &&
+ 				    ifp->base_ifindex == vrrp->ifp->ifindex)
+ 				{
+ 					log_message(LOG_INFO, "(%s): Found matching interface %s", vrrp->iname, ifp->ifname);
+diff --git a/keepalived/vrrp/vrrp_vmac.c b/keepalived/vrrp/vrrp_vmac.c
+index c6d18878..f5185754 100644
+--- a/keepalived/vrrp/vrrp_vmac.c
++++ b/keepalived/vrrp/vrrp_vmac.c
+@@ -85,6 +85,45 @@ netlink_link_up(vrrp_t *vrrp)
+ }
+ 
+ int
++netlink_link_reset_vmac_addr(vrrp_t *vrrp, bool dummy_mac)
++{
++	int status = 1;
++	struct {
++		struct nlmsghdr n;
++		struct ifinfomsg ifi;
++		char buf[256];
++	} req;
++
++	memset(&req, 0, sizeof (req));
++
++	if (vrrp->family == AF_INET6)
++		ll_addr[4] = 0x02;
++	else
++		ll_addr[4] = 0x01;
++
++	if (dummy_mac)
++		ll_addr[ETH_ALEN-1] = 0x00;
++	else
++		ll_addr[ETH_ALEN-1] = vrrp->vrid;
++
++	req.n.nlmsg_len = NLMSG_LENGTH(sizeof (struct ifinfomsg));
++	req.n.nlmsg_flags = NLM_F_REQUEST;
++	req.n.nlmsg_type = RTM_SETLINK;
++	req.ifi.ifi_family = AF_UNSPEC;
++	req.ifi.ifi_index = (int)IF_INDEX(vrrp->ifp);
++
++	addattr_l(&req.n, sizeof(req), IFLA_ADDRESS, ll_addr, ETH_ALEN);
++
++	if (netlink_talk(&nl_cmd, &req.n) < 0)
++	{
++		log_message(LOG_INFO, "Resetting VMAC failed");
++		status = -1;
++	}
++
++	return status;
++}
++
++int
+ netlink_link_add_vmac(vrrp_t *vrrp)
+ {
+ 	struct rtattr *linkinfo;
+@@ -108,7 +147,7 @@ netlink_link_add_vmac(vrrp_t *vrrp)
+ 	else
+ 		ll_addr[4] = 0x01;
+ 
+-	ll_addr[ETH_ALEN-1] = vrrp->vrid;
++	ll_addr[ETH_ALEN-1] = 0x00;
+ 
+ 	memset(&req, 0, sizeof (req));
+ 	memset(ifname, 0, IFNAMSIZ);

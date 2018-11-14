@@ -2149,7 +2149,7 @@ index 0b3c47f2..3cd8b4bd 100644
  
  void
 diff --git a/keepalived/vrrp/vrrp_scheduler.c b/keepalived/vrrp/vrrp_scheduler.c
-index 587b45df..0266b5a0 100644
+index 587b45df..06646ee8 100644
 --- a/keepalived/vrrp/vrrp_scheduler.c
 +++ b/keepalived/vrrp/vrrp_scheduler.c
 @@ -95,13 +95,13 @@ static thread_t *bfd_thread;		 /* BFD control pipe read thread */
@@ -2229,7 +2229,7 @@ index 587b45df..0266b5a0 100644
  }
  
  static void
-@@ -802,21 +802,22 @@ vrrp_handle_bfd_event(bfd_event_t * evt)
+@@ -802,21 +802,21 @@ vrrp_handle_bfd_event(bfd_event_t * evt)
  	}
  }
  
@@ -2245,7 +2245,6 @@ index 587b45df..0266b5a0 100644
  
 -	if (thread->type != THREAD_READY_FD)
 -		return 0;
-+log_message(LOG_INFO, "In vrrp_bfd_thread(), fd %d, reason %d", thread->u.fd, thread->reason);
 +	if (thread->reason != THREAD_REASON_READY_FD)
 +		return THREAD_DONT_REQUEUE;
  
@@ -2257,7 +2256,7 @@ index 587b45df..0266b5a0 100644
  }
  #endif
  
-@@ -920,7 +921,7 @@ vrrp_dispatcher_read(sock_t * sock)
+@@ -920,7 +920,7 @@ vrrp_dispatcher_read(sock_t * sock)
  }
  
  /* Our read packet dispatcher */
@@ -2266,7 +2265,7 @@ index 587b45df..0266b5a0 100644
  vrrp_read_dispatcher_thread(thread_t * thread)
  {
  	unsigned long vrrp_timer;
-@@ -931,7 +932,7 @@ vrrp_read_dispatcher_thread(thread_t * thread)
+@@ -931,7 +931,7 @@ vrrp_read_dispatcher_thread(thread_t * thread)
  	sock = THREAD_ARG(thread);
  
  	/* Dispatcher state handler */
@@ -2275,7 +2274,7 @@ index 587b45df..0266b5a0 100644
  		fd = vrrp_dispatcher_read_timeout(sock->fd_in);
  	else
  		fd = vrrp_dispatcher_read(sock);
-@@ -942,10 +943,10 @@ vrrp_read_dispatcher_thread(thread_t * thread)
+@@ -942,10 +942,10 @@ vrrp_read_dispatcher_thread(thread_t * thread)
  		sock->thread = thread_add_read(thread->master, vrrp_read_dispatcher_thread,
  					       sock, fd, vrrp_timer);
  
@@ -2288,7 +2287,7 @@ index 587b45df..0266b5a0 100644
  vrrp_script_thread(thread_t * thread)
  {
  	vrrp_script_t *vscript = THREAD_ARG(thread);
-@@ -960,7 +961,7 @@ vrrp_script_thread(thread_t * thread)
+@@ -960,7 +960,7 @@ vrrp_script_thread(thread_t * thread)
  		log_message(LOG_INFO, "Track script %s is %s, expect idle - skipping run",
  			    vscript->sname, vscript->state == SCRIPT_STATE_RUNNING ? "already running" : "being timed out");
  
@@ -2297,7 +2296,7 @@ index 587b45df..0266b5a0 100644
  	}
  
  	/* Execute the script in a child process. Parent returns, child doesn't */
-@@ -970,10 +971,10 @@ vrrp_script_thread(thread_t * thread)
+@@ -970,10 +970,10 @@ vrrp_script_thread(thread_t * thread)
  	if (!ret)
  		vscript->state = SCRIPT_STATE_RUNNING;
  
@@ -2310,7 +2309,7 @@ index 587b45df..0266b5a0 100644
  vrrp_script_child_thread(thread_t * thread)
  {
  	int wait_status;
-@@ -986,7 +987,7 @@ vrrp_script_child_thread(thread_t * thread)
+@@ -986,7 +986,7 @@ vrrp_script_child_thread(thread_t * thread)
  	char *reason = NULL;
  	int reason_code;
  
@@ -2319,7 +2318,7 @@ index 587b45df..0266b5a0 100644
  		pid = THREAD_CHILD_PID(thread);
  
  		if (vscript->state == SCRIPT_STATE_RUNNING) {
-@@ -1017,7 +1018,7 @@ vrrp_script_child_thread(thread_t * thread)
+@@ -1017,7 +1017,7 @@ vrrp_script_child_thread(thread_t * thread)
  		if (timeout)
  			thread_add_child(thread->master, vrrp_script_child_thread, vscript, pid, timeout * TIMER_HZ);
  
@@ -2328,7 +2327,7 @@ index 587b45df..0266b5a0 100644
  	}
  
  	wait_status = THREAD_CHILD_STATUS(thread);
-@@ -1095,11 +1096,11 @@ vrrp_script_child_thread(thread_t * thread)
+@@ -1095,11 +1095,11 @@ vrrp_script_child_thread(thread_t * thread)
  	vscript->state = SCRIPT_STATE_IDLE;
  	vscript->init_state = SCRIPT_INIT_STATE_DONE;
  
@@ -2342,7 +2341,7 @@ index 587b45df..0266b5a0 100644
  vrrp_arp_thread(thread_t *thread)
  {
  	element e, a;
-@@ -1188,7 +1189,7 @@ vrrp_arp_thread(thread_t *thread)
+@@ -1188,7 +1188,7 @@ vrrp_arp_thread(thread_t *thread)
  	else
  		garp_thread = NULL;
  
@@ -2351,7 +2350,7 @@ index 587b45df..0266b5a0 100644
  }
  
  #ifdef _WITH_DUMP_THREADS_
-@@ -1230,19 +1231,19 @@ dump_thread_list( FILE *fp, thread_list_t *tlist, const char *type)
+@@ -1230,19 +1230,19 @@ dump_thread_list( FILE *fp, thread_list_t *tlist, const char *type)
  
  	fprintf(fp, "\n  %s thread list dump\n", type);
  	for (thread = tlist->head; thread; thread = thread->next) {
@@ -2377,7 +2376,7 @@ index 587b45df..0266b5a0 100644
  				"unknown");
  
  		fprintf(fp, "    id = %lu\n", thread->id);
-@@ -1315,5 +1316,8 @@ print_vrrp_scheduler_addresses(void)
+@@ -1315,5 +1315,8 @@ print_vrrp_scheduler_addresses(void)
  	log_message(LOG_INFO, "Address of vrrp_script_child_thread() is 0x%p", vrrp_script_child_thread);
  	log_message(LOG_INFO, "Address of vrrp_script_thread() is 0x%p", vrrp_script_thread);
  	log_message(LOG_INFO, "Address of vrrp_read_dispatcher_thread() is 0x%p", vrrp_read_dispatcher_thread);
@@ -2477,7 +2476,7 @@ index 88f167bf..17b244a6 100644
  extern void script_killall(thread_master_t *, int);
  extern int check_script_secure(notify_script_t *, magic_t);
 diff --git a/lib/scheduler.c b/lib/scheduler.c
-index ec8d3952..a3baf1df 100644
+index ec8d3952..34c7e7fc 100644
 --- a/lib/scheduler.c
 +++ b/lib/scheduler.c
 @@ -255,6 +255,8 @@ thread_make_master(void)
@@ -2571,18 +2570,15 @@ index ec8d3952..a3baf1df 100644
  	thread->id = 0;
  	thread->master = m;
  	thread->func = func;
-@@ -650,8 +655,10 @@ thread_add_terminate_event(thread_master_t * m)
+@@ -652,6 +657,7 @@ thread_add_terminate_event(thread_master_t * m)
  
- 	assert(m != NULL);
- 
-+log_message(LOG_INFO, "Adding terminate event");
  	thread = thread_new(m);
  	thread->type = THREAD_TERMINATE;
 +	thread->reason = THREAD_REASON_READY;
  	thread->id = 0;
  	thread->master = m;
  	thread->func = NULL;
-@@ -662,6 +669,58 @@ thread_add_terminate_event(thread_master_t * m)
+@@ -662,6 +668,58 @@ thread_add_terminate_event(thread_master_t * m)
  	return thread;
  }
  
@@ -2641,7 +2637,7 @@ index ec8d3952..a3baf1df 100644
  /* Cancel thread from scheduler. */
  int
  thread_cancel(thread_t * thread)
-@@ -669,39 +728,51 @@ thread_cancel(thread_t * thread)
+@@ -669,39 +727,51 @@ thread_cancel(thread_t * thread)
  	if (!thread)
  		return -1;
  
@@ -2720,7 +2716,7 @@ index ec8d3952..a3baf1df 100644
  	}
  
  	thread->type = THREAD_UNUSED;
-@@ -910,7 +981,7 @@ retry:	/* When thread can't fetch try to find next thread again. */
+@@ -910,7 +980,7 @@ retry:	/* When thread can't fetch try to find next thread again. */
  				break;
  
  			if (timercmp(&time_now, &t->sands, >=)) {
@@ -2729,43 +2725,47 @@ index ec8d3952..a3baf1df 100644
  				if (child_remover)
  					child_remover(t);
  			}
-@@ -927,15 +998,14 @@ retry:	/* When thread can't fetch try to find next thread again. */
+@@ -927,15 +997,14 @@ retry:	/* When thread can't fetch try to find next thread again. */
  		thread = t->next;
  
  		if (num_fds && FD_ISSET(t->u.fd, &readfd)) {
 -			assert(FD_ISSET(t->u.fd, &m->readfd));
  			num_fds--;
- 			FD_CLR(t->u.fd, &m->readfd);
+-			FD_CLR(t->u.fd, &m->readfd);
 -			thread_list_make_ready(&m->read, t, m, THREAD_READY_FD);
++//			FD_CLR(t->u.fd, &m->readfd);
 +			thread_list_make_ready(&m->read, t, m, THREAD_REASON_READY_FD);
  		} else if (!timers_done &&
  			   t->sands.tv_sec != TIMER_DISABLED &&
  			   timercmp(&time_now, &t->sands, >=)) {
- 			FD_CLR(t->u.fd, &m->readfd);
+-			FD_CLR(t->u.fd, &m->readfd);
 -			thread_list_make_ready(&m->read, t, m, THREAD_READ_TIMEOUT);
++//			FD_CLR(t->u.fd, &m->readfd);
 +			thread_list_make_ready(&m->read, t, m, THREAD_REASON_READ_TIMEOUT);
  		}
  		else
  			timers_done = true;
-@@ -949,15 +1019,14 @@ retry:	/* When thread can't fetch try to find next thread again. */
+@@ -949,15 +1018,14 @@ retry:	/* When thread can't fetch try to find next thread again. */
  		thread = t->next;
  
  		if (num_fds && FD_ISSET(t->u.fd, &writefd)) {
 -			assert(FD_ISSET(t->u.fd, &writefd));
  			num_fds--;
- 			FD_CLR(t->u.fd, &m->writefd);
+-			FD_CLR(t->u.fd, &m->writefd);
 -			thread_list_make_ready(&m->write, t, m, THREAD_READY_FD);
++//			FD_CLR(t->u.fd, &m->writefd);
 +			thread_list_make_ready(&m->write, t, m, THREAD_REASON_READY_FD);
  		} else if (!timers_done &&
  			   t->sands.tv_sec != TIMER_DISABLED &&
  			   timercmp(&time_now, &t->sands, >=)) {
- 			FD_CLR(t->u.fd, &m->writefd);
+-			FD_CLR(t->u.fd, &m->writefd);
 -			thread_list_make_ready(&m->write, t, m, THREAD_WRITE_TIMEOUT);
++//			FD_CLR(t->u.fd, &m->writefd);
 +			thread_list_make_ready(&m->write, t, m, THREAD_REASON_WRITE_TIMEOUT);
  		}
  		else
  			timers_done = true;
-@@ -973,7 +1042,7 @@ retry:	/* When thread can't fetch try to find next thread again. */
+@@ -973,7 +1041,7 @@ retry:	/* When thread can't fetch try to find next thread again. */
  			thread = t->next;
  
  			if (timercmp(&time_now, &t->sands, >=))
@@ -2774,7 +2774,7 @@ index ec8d3952..a3baf1df 100644
  			else
  				break;
  		}
-@@ -991,11 +1060,58 @@ retry:	/* When thread can't fetch try to find next thread again. */
+@@ -991,11 +1059,58 @@ retry:	/* When thread can't fetch try to find next thread again. */
  	return &m->ready;
  }
  
@@ -2833,7 +2833,7 @@ index ec8d3952..a3baf1df 100644
  	int thread_type;
  
  	/*
-@@ -1019,13 +1135,22 @@ process_threads(thread_master_t *m)
+@@ -1019,13 +1134,23 @@ process_threads(thread_master_t *m)
  #endif
  
  		thread = thread_trim_head(thread_list);
@@ -2843,15 +2843,16 @@ index ec8d3952..a3baf1df 100644
 +			requeue_timer = thread_call(thread);
 +		else
 +			requeue_timer = THREAD_DONT_REQUEUE;
-+log_message(LOG_INFO, "Got thread type %d, reason %d, address %p, func %p, requeue_timer %lu", thread->type, thread->reason, thread, thread->func, requeue_timer);
  
  		thread_type = thread->type;
 -		thread->type = THREAD_UNUSED;
 -		thread_add_unuse(master, thread);
 +		if (requeue_timer == THREAD_DONT_REQUEUE) {
-+			if ((thread->type == THREAD_READ || thread->type == THREAD_WRITE) &&
-+			    thread->u.fd == thread->master->max_fd)
-+				recalc_max_fd(thread->master, thread->u.fd);
++			if (thread->type == THREAD_READ || thread->type == THREAD_WRITE) {
++				FD_CLR(thread->u.fd, (thread->type == THREAD_READ) ? &m->readfd : &m->writefd);
++				if (thread->u.fd == thread->master->max_fd)
++					recalc_max_fd(thread->master, thread->u.fd);
++			}
 +
 +			thread->type = THREAD_UNUSED;
 +			thread_add_unuse(master, thread);
@@ -2988,7 +2989,7 @@ index ffdbfb56..129b2028 100644
  extern void launch_scheduler(void);
  #endif
 diff --git a/lib/signals.c b/lib/signals.c
-index 357c6e09..41f1e4e3 100644
+index 357c6e09..0daf2705 100644
 --- a/lib/signals.c
 +++ b/lib/signals.c
 @@ -293,7 +293,7 @@ signal_ignore(int signo)
@@ -3000,14 +3001,7 @@ index 357c6e09..41f1e4e3 100644
  signal_run_callback(__attribute__((unused)) thread_t *thread)
  {
  	int sig;
-@@ -305,13 +305,14 @@ signal_run_callback(__attribute__((unused)) thread_t *thread)
- #else
- 	while(read(signal_pipe[0], &sig, sizeof(int)) == sizeof(int)) {
- #endif
-+log_message(LOG_INFO, "Got signal %d", sig);
- 		if (sig >= 1 && sig <= SIG_MAX && signal_handler_func[sig-1])
- 			signal_handler_func[sig-1](signal_v[sig-1], sig);
- 	}
+@@ -311,7 +311,7 @@ signal_run_callback(__attribute__((unused)) thread_t *thread)
  
  	signal_thread = thread_add_read(master, signal_run_callback, NULL, signal_rfd(), TIMER_NEVER);
  
