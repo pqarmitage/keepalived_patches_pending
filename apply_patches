@@ -1,42 +1,143 @@
 #!/bin/bash
 
+export LC_COLLATE=C
+
 STEP=1
+CMD=patch
+FIRST=0
+LAST=
+EACH=
+PATCH_LIST=
+DIR=.
+AMALGAMATE=0
+PROMPT_CONT=0
+MERGE_TYPE=
 
-DIR=${1:-.}
-[[ $2 = R ]] && STEP=-1 && shift
-FIRST=${2:-0}
-LAST=${3:-}
-NUM_SKIP=${4:-5}
+show_help()
+{
+	cat <<EOF
+$0 - Usage:
+	-h		Show this!
+	-d directory	Patch directory name
+	-r		Apply in reverse
+	-f patch num	First patch
+	-l patch num	Last patch
+	-p patch_num	Only specified patch
+	-c command	Command to execute
+	-a		Amalgamate command processing
+	-m		patch merge type
+	-P		Prompt to continue
+EOF
+}
 
-if [[ -z $LAST ]]; then
-	LAST=$(ls -1 ../patches/warn/ | grep "^[0-9][0-9][0-9].*patch$" | tail -1 | sed -e "s/-.*//")
-fi
+while getopts ":hd:rf:l:c:am:p:P" opt; do
+	case $opt in
+	h)
+		show_help
+		exit 0
+		;;
+	d)
+		DIR=$OPTARG
+		;;
+	r)
+		STEP=-1
+		;;
+	f)
+		FIRST=$OPTARG
+		;;
+	l)
+		LAST=$OPTARG
+		;;
+	p)
+		FIRST=$OPTARG
+		LAST=$OPTARG
+		;;
+	c)
+		CMD=$OPTARG
+		;;
+	a)
+		AMALGAMATE=1
+		;;
+	m)
+		MERGE_TYPE=--merge=$OPTARG
+		;;
+	P)
+		PROMPT_CONT=1
+		;;
+        ?)
+                echo Unknown option && show_help && exit 1
+                ;;
+        esac
+done
+
+
+[[ -z $LAST ]] && LAST=$(ls -1 $DIR/[0-9][0-9][0-9]-*.patch | tail -1 | sed -e "s:.*/::" -e "s/-.*//")
 
 if [[ $STEP = -1 ]]; then
 	START=$LAST
 	END=$FIRST
 	PATCH_REV=R
+	SORT_FLAG=-r
 else
 	START=$FIRST
 	END=$LAST
 	PATCH_REV=
+	SORT_FLAG=
 fi
 
 LAST_PATCH=none
 
+process_patch()
+{
+	local PATCH_NAME=$1
+	local patch
+
+	patch=$(find $DIR -name "${PATCH_NAME}-*.patch" -o -name "${PATCH_NAME}[a-z]-*.patch" | sort -i | tail -1)
+	LAST_PATCH=$PATCH_NAME
+
+	if [[ $CMD = patch ]]; then
+		echo -e "\nApplying $patch"
+		patch $MERGE_TYPE -${PATCH_REV}p1 <$patch
+		[[ $? -ne 0 ]] && echo $patch failed && exit 1
+	elif [[ $AMALGAMATE -eq 1 ]]; then
+		PATCH_FILES="$PATCH_FILES $patch"
+	else
+		$CMD $patch
+		if [[ $PROMPT_CONT -eq 1 ]]; then
+			read -p "Do you wish to continue:" ANS
+			[[ $ANS = "n" ]] && exit
+		fi
+	fi
+}
+
+process_sub_patches()
+{
+	local PATCH_NUM=$1
+	local FILES SUB_PATCHES SUB_PATCH
+
+	FILES=$(find ${DIR} -name "${PATCH_NUM}.[0-9]-*.patch" -o -name "${PATCH_NUM}.[0-9][a-z]-*.patch" 2>/dev/null)
+	[[ -z $FILES ]] && return
+
+	SUB_PATCHES=$(find $DIR -name "${PATCH_NUM}.[0-9]-*.patch" -o -name "${PATCH_NUM}.[0-9][a-z]-*.patch" | sed -e "s:.*/::" -e "s/-.*//" -e "s/[a-z]$//" | sort -u $SORT_FLAG)
+	for SUB_PATCH in $SUB_PATCHES; do
+		process_patch $SUB_PATCH
+	done
+}
+
 for n in $(seq $START $STEP $END); do
 	PATCH_NUM=$(printf "%3.3d" $n)
 
-	ls ${DIR}/${PATCH_NUM}*.patch >/dev/null 2>&1
+	# Where there are sub-patches, - 000.1f 000.2e etc, they need to be done in reverse if reversing
+	[[ $PATCH_REV = R ]] && process_sub_patches $PATCH_NUM
 
-	[[ $? -ne 0 ]] && continue
+	FILES=$(find ${DIR} -name "${PATCH_NUM}-*.patch" -o -name "${PATCH_NUM}[a-z]-*.patch" 2>/dev/null)
+	[[ -z $FILES ]] && continue
 
-	patch=$(ls -1 $DIR/${PATCH_NUM}*.patch | sed -e "s:\(/[^-]*\)-:\10-:" | sort -i | sed -e "s:\(/[^-]*\)0-:\1-:" | tail -1)
-	LAST_PATCH=$PATCH_NUM
+	process_patch $PATCH_NUM
 
-	echo -e "\nApplying $patch"
-	patch -${PATCH_REV}p1 <$patch
-	[[ $? -ne 0 ]] && echo $patch failed && exit 1
+	[[ $PATCH_REV != R ]] && process_sub_patches $PATCH_NUM
 done
+
+[[ $AMALGAMATE -eq 1 ]] && $CMD $PATCH_FILES
 
 echo -e "\n" Last patch num $LAST_PATCH
