@@ -1,0 +1,42 @@
+#!/bin/bash
+
+STEP=1
+
+DIR=${1:-.}
+[[ $2 = R ]] && STEP=-1 && shift
+FIRST=${2:-0}
+LAST=${3:-}
+NUM_SKIP=${4:-5}
+
+if [[ -z $LAST ]]; then
+	LAST=$(ls -1 ../patches/warn/ | grep "^[0-9][0-9][0-9].*patch$" | tail -1 | sed -e "s/-.*//")
+fi
+
+if [[ $STEP = -1 ]]; then
+	START=$LAST
+	END=$FIRST
+	PATCH_REV=R
+else
+	START=$FIRST
+	END=$LAST
+	PATCH_REV=
+fi
+
+LAST_PATCH=none
+
+for n in $(seq $START $STEP $END); do
+	PATCH_NUM=$(printf "%3.3d" $n)
+
+	ls ${DIR}/${PATCH_NUM}*.patch >/dev/null 2>&1
+
+	[[ $? -ne 0 ]] && continue
+
+	patch=$(ls -1 $DIR/${PATCH_NUM}*.patch | sed -e "s:\(/[^-]*\)-:\10-:" | sort -i | sed -e "s:\(/[^-]*\)0-:\1-:" | tail -1)
+	LAST_PATCH=$PATCH_NUM
+
+	echo -e "\nApplying $patch"
+	patch -${PATCH_REV}p1 <$patch
+	[[ $? -ne 0 ]] && echo $patch failed && exit 1
+done
+
+echo -e "\n" Last patch num $LAST_PATCH
