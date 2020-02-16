@@ -2,7 +2,7 @@
 
 export LC_COLLATE=C
 
-STEP=1
+REVERSE=0
 CMD=patch
 FIRST=0
 LAST=
@@ -48,7 +48,7 @@ while getopts ":hd:rf:l:c:x:am:p:A:n:Pe" opt; do
 		DIR=$OPTARG
 		;;
 	r)
-		STEP=-1
+		REVERSE=1
 		;;
 	e)
 		PATCH_FLAGS+=" --remove-empty-files"
@@ -94,14 +94,10 @@ done
 
 [[ -z $LAST ]] && LAST=$(ls -1 $DIR/[0-9][0-9][0-9]-*.patch | tail -1 | sed -e "s:.*/::" -e "s/-.*//")
 
-if [[ $STEP = -1 ]]; then
-	START=$LAST
-	END=$FIRST
+if [[ $REVERSE -eq 1 ]]; then
 	PATCH_REV=R
 	SORT_FLAG=-r
 else
-	START=$FIRST
-	END=$LAST
 	PATCH_REV=
 	SORT_FLAG=
 fi
@@ -151,8 +147,16 @@ process_sub_patches()
 	done
 }
 
-for n in $(seq $START $STEP $END); do
-	PATCH_NUM=$(printf "%3.3d" $n)
+# All patches are matched by ${DIR}/[0-9][0-9][0-9]{,[a-z],.[0-9]{,[a-z]}}-*.patch
+for n in $(ls -1 ${DIR}/[0-9][0-9][0-9]-*.patch 2>/dev/null | sed -e "s:.*/::" -e "s/-.*//" | sort $SORT_FLAG -u); do
+	[[ $n -ne 0 ]] && PATCH_NUM=$(<<<$n sed -e "s/^0*//") || PATCH_NUM=0
+	if [[ $PATCH_NUM -lt $FIRST ]]; then
+		[[ $REVERSE -eq 1 ]] && break || continue
+	elif [[ $PATCH_NUM -gt $LAST ]]; then
+		[[ $REVERSE -eq 1 ]] && continue || break
+	fi
+
+	PATCH_NUM=$n
 
 	# Where there are sub-patches, - 000.1f 000.2e etc, they need to be done in reverse if reversing
 	[[ $PATCH_REV = R ]] && process_sub_patches $PATCH_NUM
