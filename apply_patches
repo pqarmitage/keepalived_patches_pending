@@ -11,7 +11,11 @@ PATCH_LIST=
 DIR=.
 AMALGAMATE=0
 PROMPT_CONT=0
-MERGE_TYPE=
+POST_CMD=
+NUM_PATCHES=
+PATCH_FLAGS=
+
+[[ -n $PATCH_DIR ]] && DIR=$PATCH_DIR
 
 show_help()
 {
@@ -20,17 +24,21 @@ $0 - Usage:
 	-h		Show this!
 	-d directory	Patch directory name
 	-r		Apply in reverse
+	-e		Remove empty files after patch
 	-f patch num	First patch
 	-l patch num	Last patch
 	-p patch_num	Only specified patch
+	-A patch_num	Patches after patch_num (default only 1)
+	-n num		Number of patches to apply (TODO)
 	-c command	Command to execute
 	-a		Amalgamate command processing
+	-x		Command to execute after each patch
 	-m		patch merge type
 	-P		Prompt to continue
 EOF
 }
 
-while getopts ":hd:rf:l:c:am:p:P" opt; do
+while getopts ":hd:rf:l:c:x:am:p:A:n:Pe" opt; do
 	case $opt in
 	h)
 		show_help
@@ -42,6 +50,9 @@ while getopts ":hd:rf:l:c:am:p:P" opt; do
 	r)
 		STEP=-1
 		;;
+	e)
+		PATCH_FLAGS+=" --remove-empty-files"
+		;;
 	f)
 		FIRST=$OPTARG
 		;;
@@ -52,14 +63,24 @@ while getopts ":hd:rf:l:c:am:p:P" opt; do
 		FIRST=$OPTARG
 		LAST=$OPTARG
 		;;
+	A)
+		FIRST=$((OPTARG+1))
+		[[ -z $NUM_PATCHES ]] && NUM_PATCHES=1
+		;;
+	n)
+		NUM_PATCHES=$OPTARG
+		;;
 	c)
 		CMD=$OPTARG
+		;;
+	x)
+		POST_CMD=$OPTARG
 		;;
 	a)
 		AMALGAMATE=1
 		;;
 	m)
-		MERGE_TYPE=--merge=$OPTARG
+		PATCH_FLAGS+=" --merge=$OPTARG"
 		;;
 	P)
 		PROMPT_CONT=1
@@ -97,8 +118,14 @@ process_patch()
 
 	if [[ $CMD = patch ]]; then
 		echo -e "\nApplying $patch"
-		patch $MERGE_TYPE -${PATCH_REV}p1 <$patch
+		patch $PATCH_FLAGS -${PATCH_REV}p1 <$patch
 		[[ $? -ne 0 ]] && echo $patch failed && exit 1
+
+		# If a command is specified, run it
+		if [[ -n $POST_CMD ]]; then
+		       eval $POST_CMD $patch
+		       [[ $? -ne 0 ]] && echo $POST_CMD failed after patch $PATCH_NAME && exit 1
+	       fi
 	elif [[ $AMALGAMATE -eq 1 ]]; then
 		PATCH_FILES="$PATCH_FILES $patch"
 	else
@@ -136,6 +163,8 @@ for n in $(seq $START $STEP $END); do
 	process_patch $PATCH_NUM
 
 	[[ $PATCH_REV != R ]] && process_sub_patches $PATCH_NUM
+
+	[[ -n $NUM_PATCHES && $((--NUM_PATCHES)) -eq 0 ]] && break
 done
 
 [[ $AMALGAMATE -eq 1 ]] && $CMD $PATCH_FILES
